@@ -1,0 +1,101 @@
+# -----------------------------
+# Python
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+
+# -----------------------------
+# Environment Variables
+# -----------------------------
+.env
+.env.*
+!.env.example
+
+# -----------------------------
+# FastAPI
+# -----------------------------
+*.log
+logs/
+uvicorn.log
+
+# -----------------------------
+# LangChain / LangGraph
+# -----------------------------
+.langgraph_api/
+.langsmith/
+checkpoints/
+memory/
+storage/
+cache/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# -----------------------------
+# Testing
+# -----------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# -----------------------------
+# VS Code
+# -----------------------------
+.vscode/
+
+# -----------------------------
+# JetBrains / PyCharm
+# -----------------------------
+.idea/
+
+# -----------------------------
+# Jupyter
+# -----------------------------
+.ipynb_checkpoints/
+
+# -----------------------------
+# Build / Distribution
+# -----------------------------
+build/
+dist/
+*.egg-info/
+
+# -----------------------------
+# OS Files
+# -----------------------------
+.DS_Store
+Thumbs.db
+
+# -----------------------------
+# Node.js (if frontend exists)
+# -----------------------------
+node_modules/
+.next/
+out/
+
+# -----------------------------
+# Temporary Files
+# -----------------------------
+tmp/
+temp/
+*.tmp
+
+# -----------------------------
+# Secrets
+# -----------------------------
+secrets.json
+credentials.json
+service-account.json
