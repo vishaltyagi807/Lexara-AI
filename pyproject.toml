@@ -10,4 +10,17 @@ dependencies = [
     "langchain-groq>=1.1.2",
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
+    # --- Lexara-AI Gateway (api/) ---
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.13",
+    "passlib[bcrypt]>=1.7.4",
+    "python-jose[cryptography]>=3.3.0",
+    "redis>=5.0",
+    "pydantic-settings>=2.0",
+    "email-validator>=2.0",
+    "aiokafka>=0.10",
+    "prometheus-fastapi-instrumentator>=7.0",
 ]
