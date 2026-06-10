@@ -12,6 +12,7 @@ from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.auth import (
+    ConnectedAccount,
     LoginRequest,
     RefreshResponse,
     RegisterRequest,
@@ -28,15 +29,15 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-
-
 async def _get_raw_token(
     request: Request,
     credentials: Annotated[
         HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)
     ] = None,
 ) -> str:
-    token = request.cookies.get("access_token")
+    token = request.headers.get("X-Access-Token")
+    if not token:
+        token = request.cookies.get("access_token")
     if not token and credentials and credentials.credentials:
         token = credentials.credentials
 
@@ -81,30 +82,37 @@ async def register(
 )
 async def login(
     data: LoginRequest,
+    request: Request,
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserResponse:
     user, token_response = await auth_service.login_user(db=db, email=data.email, password=data.password)
-    response.set_cookie(
-        key="access_token",
-        value=token_response.access_token,
-        httponly=True,
-        max_age=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
-        expires=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
-        domain=settings.COOKIE_DOMAIN,
-        secure=settings.COOKIE_SECURE,
-        samesite=settings.COOKIE_SAMESITE,
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=token_response.refresh_token,
-        httponly=True,
-        max_age=settings.REFRESH_TOKEN_EXPIRE_SECONDS,
-        expires=settings.REFRESH_TOKEN_EXPIRE_SECONDS,
-        domain=settings.COOKIE_DOMAIN,
-        secure=settings.COOKIE_SECURE,
-        samesite=settings.COOKIE_SAMESITE,
-    )
+
+    client_type = request.headers.get("X-Client-Type", "web").lower()
+    if client_type == "mobile":
+        response.headers["X-Access-Token"] = token_response.access_token
+        response.headers["X-Refresh-Token"] = token_response.refresh_token
+    else:
+        response.set_cookie(
+            key="access_token",
+            value=token_response.access_token,
+            httponly=True,
+            max_age=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+            expires=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+            domain=settings.COOKIE_DOMAIN,
+            secure=settings.COOKIE_SECURE,
+            samesite=settings.COOKIE_SAMESITE,
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=token_response.refresh_token,
+            httponly=True,
+            max_age=settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+            expires=settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+            domain=settings.COOKIE_DOMAIN,
+            secure=settings.COOKIE_SECURE,
+            samesite=settings.COOKIE_SAMESITE,
+        )
     return UserResponse.model_validate(user)
 
 
@@ -121,34 +129,40 @@ async def refresh(
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> RefreshResponse:
-    refresh_token = request.cookies.get("refresh_token")
+    refresh_token = request.headers.get("X-Refresh-Token") or request.cookies.get("refresh_token")
     if not refresh_token:
         from app.core.exceptions import AuthException
         raise AuthException(
-            detail="Refresh token missing from cookie.",
+            detail="Refresh token missing from cookie or header.",
             code="MISSING_REFRESH_TOKEN",
         )
     token_response = await auth_service.refresh_tokens(db=db, refresh_token=refresh_token)
-    response.set_cookie(
-        key="access_token",
-        value=token_response.access_token,
-        httponly=True,
-        max_age=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
-        expires=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
-        domain=settings.COOKIE_DOMAIN,
-        secure=settings.COOKIE_SECURE,
-        samesite=settings.COOKIE_SAMESITE,
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=token_response.refresh_token,
-        httponly=True,
-        max_age=settings.REFRESH_TOKEN_EXPIRE_SECONDS,
-        expires=settings.REFRESH_TOKEN_EXPIRE_SECONDS,
-        domain=settings.COOKIE_DOMAIN,
-        secure=settings.COOKIE_SECURE,
-        samesite=settings.COOKIE_SAMESITE,
-    )
+
+    client_type = request.headers.get("X-Client-Type", "web").lower()
+    if client_type == "mobile":
+        response.headers["X-Access-Token"] = token_response.access_token
+        response.headers["X-Refresh-Token"] = token_response.refresh_token
+    else:
+        response.set_cookie(
+            key="access_token",
+            value=token_response.access_token,
+            httponly=True,
+            max_age=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+            expires=settings.ACCESS_TOKEN_EXPIRE_SECONDS,
+            domain=settings.COOKIE_DOMAIN,
+            secure=settings.COOKIE_SECURE,
+            samesite=settings.COOKIE_SAMESITE,
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=token_response.refresh_token,
+            httponly=True,
+            max_age=settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+            expires=settings.REFRESH_TOKEN_EXPIRE_SECONDS,
+            domain=settings.COOKIE_DOMAIN,
+            secure=settings.COOKIE_SECURE,
+            samesite=settings.COOKIE_SAMESITE,
+        )
     return RefreshResponse(expires_in=settings.ACCESS_TOKEN_EXPIRE_SECONDS)
 
 
@@ -308,3 +322,26 @@ async def update_me(
         await db.refresh(current_user)
 
     return UserResponse.model_validate(current_user)
+
+
+
+
+@router.get(
+    "/me/accounts",
+    response_model=list[ConnectedAccount],
+    status_code=status.HTTP_200_OK,
+    summary="Get connected social accounts",
+)
+async def get_me_accounts(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+) -> list[ConnectedAccount]:
+    accounts = []
+    if current_user.oauth_provider:
+        connected_at = current_user.oauth_connected_at or current_user.created_at
+        accounts.append(
+            ConnectedAccount(
+                provider=current_user.oauth_provider,
+                connected_at=connected_at,
+            )
+        )
+    return accounts

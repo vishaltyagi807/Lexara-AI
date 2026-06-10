@@ -18,7 +18,9 @@ def _extract_token(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None,
 ) -> str:
-    token = request.cookies.get("access_token")
+    token = request.headers.get("X-Access-Token")
+    if not token:
+        token = request.cookies.get("access_token")
     if not token and credentials and credentials.credentials:
         token = credentials.credentials
 

@@ -62,9 +62,19 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    from starlette.middleware.sessions import SessionMiddleware
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.SECRET_KEY,
+        session_cookie="oauth_session",
+        same_site="lax",
+        https_only=settings.COOKIE_SECURE,
+    )
     register_exception_handlers(app)
     from app.api.v1.auth.basic import router as auth_router
     app.include_router(auth_router)
+    from app.api.v1.auth.oauth import router as oauth_router
+    app.include_router(oauth_router)
 
     try:
         from prometheus_fastapi_instrumentator import Instrumentator

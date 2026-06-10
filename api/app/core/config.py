@@ -27,12 +27,28 @@ class Settings(BaseSettings):
     COOKIE_DOMAIN: str | None = None
     COOKIE_SECURE: bool = False
     COOKIE_SAMESITE: str = "lax"
+    
+    GOOGLE_CLIENT_ID: str | None = None
+    GOOGLE_CLIENT_SECRET: str | None = None
+
+    GITHUB_CLIENT_ID: str | None = None
+    GITHUB_CLIENT_SECRET: str | None = None
+
+    DISCORD_CLIENT_ID: str | None = None
+    DISCORD_CLIENT_SECRET: str | None = None
+
+    MICROSOFT_CLIENT_ID: str | None = None
+    MICROSOFT_CLIENT_SECRET: str | None = None
+
+    WEB_OAUTH_REDIRECT_BASE: str = "https://app.lexara.ai"
+    MOBILE_OAUTH_REDIRECT_URI: str = "lexara://oauth/callback"
+    OAUTH_STATE_TTL_SECONDS: int = 600
 
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/lexara"
 
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000", "lexara://oauth/callback"]
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

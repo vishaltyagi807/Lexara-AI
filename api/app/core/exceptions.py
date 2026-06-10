@@ -36,11 +36,27 @@ class NotFoundException(Exception):
         super().__init__(detail)
 
 
+class OAuthException(Exception):
+
+    def __init__(self, detail: str, code: str, status_code: int = 400) -> None:
+        self.detail = detail
+        self.code = code
+        self.status_code = status_code
+        super().__init__(detail)
+
+
 
 
 def _error_body(error: str, detail: str, code: str) -> dict:
     return {"error": error, "detail": detail, "code": code}
 
+
+
+async def oauth_exception_handler(request: Request, exc: OAuthException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": "oauth_error", "code": exc.code, "detail": exc.detail},
+    )
 
 
 async def auth_exception_handler(request: Request, exc: AuthException) -> JSONResponse:
@@ -119,6 +135,7 @@ async def validation_exception_handler(
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(OAuthException, oauth_exception_handler)
     app.add_exception_handler(AuthException, auth_exception_handler)
     app.add_exception_handler(ConflictException, conflict_exception_handler)
     app.add_exception_handler(ForbiddenException, forbidden_exception_handler)
