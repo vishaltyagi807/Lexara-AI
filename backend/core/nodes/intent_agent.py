@@ -3,10 +3,9 @@ import logging
 from functools import lru_cache
 
 from langchain_groq import ChatGroq
-
-from config import cfg
-from models.intent import IntentResult
-from state import GraphState
+from core.config import cfg
+from core.models.intent import IntentResult
+from core.state import GraphState
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ def _get_chain():
 def intent_agent_node(state: GraphState) -> GraphState:
     """Classify the query; write IntentResult into state."""
     if state.get("error"):
-        return state  # propagate upstream errors
+        return state
 
     query = state["query"]
     log.info("IntentAgent classifying: %.80s…", query)
@@ -57,7 +56,6 @@ def intent_agent_node(state: GraphState) -> GraphState:
 
     except Exception as exc:
         log.error("IntentAgent failed: %s", exc)
-        # Graceful fallback — route to GeneralAgent
         fallback = IntentResult(
             query_type="unknown",
             complexity_score=5,

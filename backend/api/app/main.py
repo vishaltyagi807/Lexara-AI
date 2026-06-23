@@ -1,4 +1,14 @@
 from __future__ import annotations
+import sys
+import os
+
+# Adds backend/ to path so `import core` resolves to backend/core/
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+import logging
+from contextlib import asynccontextmanager
+# ... rest unchanged
+
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -6,9 +16,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
+
 logger = logging.getLogger(__name__)
-
-
 
 
 @asynccontextmanager
@@ -24,7 +33,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     try:
         import redis.asyncio as aioredis
-
         r: aioredis.Redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         async with r:
             await r.ping()
@@ -32,17 +40,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("Redis connection FAILED: %s — token blacklisting will not work.", exc)
 
-
-
     yield
 
     logger.info("Shutting down %s …", settings.APP_NAME)
     from app.db.session import engine
-
     await engine.dispose()
     logger.info("Database engine disposed ✓")
-
-
 
 
 def create_app() -> FastAPI:
@@ -62,6 +65,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
     from starlette.middleware.sessions import SessionMiddleware
     app.add_middleware(
         SessionMiddleware,
@@ -70,20 +74,28 @@ def create_app() -> FastAPI:
         same_site="lax",
         https_only=settings.COOKIE_SECURE,
     )
+
     register_exception_handlers(app)
+
     from app.api.v1.auth.basic import router as auth_router
     app.include_router(auth_router)
+
     from app.api.v1.auth.oauth import router as oauth_router
     app.include_router(oauth_router)
 
+    # ── Chat router (AI layer) ─────────────────────────────────────────────
+    from app.api.v1.chat.chat import router as chat_router
+    app.include_router(chat_router, prefix="/api/v1")
+    # ──────────────────────────────────────────────────────────────────────
+
     try:
         from prometheus_fastapi_instrumentator import Instrumentator
-
         Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
         logger.info("Prometheus metrics initialized ✓")
     except ImportError:
         logger.info("prometheus-fastapi-instrumentator not installed — skipping metrics.")
 
     return app
+
 
 app = create_app()

@@ -1,6 +1,6 @@
 """OrchestratorNode — validates and prepares the incoming query."""
 import logging
-from state import GraphState
+from core.state import GraphState
 
 log = logging.getLogger(__name__)
 
