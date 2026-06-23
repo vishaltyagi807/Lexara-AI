@@ -1,10 +1,10 @@
 """graph.py — wires all nodes into a LangGraph StateGraph."""
 from langgraph.graph import StateGraph, END
 
-from state import GraphState
-from nodes.orchestrator import orchestrator_node
-from nodes.intent_agent  import intent_agent_node
-from nodes.router        import router_node, route_selector
+from core.state import GraphState
+from core.nodes.orchestrator import orchestrator_node
+from core.nodes.intent_agent  import intent_agent_node
+from core.nodes.router        import router_node, route_selector
 
 
 def build_graph() -> StateGraph:
@@ -17,7 +17,6 @@ def build_graph() -> StateGraph:
     g.set_entry_point("orchestrator")
     g.add_edge("orchestrator", "intent_agent")
 
-    # Conditional: if fatal error skip routing, else go to router
     g.add_conditional_edges(
         "intent_agent",
         route_selector,
@@ -28,5 +27,4 @@ def build_graph() -> StateGraph:
     return g.compile()
 
 
-# Module-level singleton — import and call directly
 graph = build_graph()
