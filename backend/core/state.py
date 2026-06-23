@@ -2,12 +2,12 @@
 from typing import Optional
 from typing_extensions import TypedDict
 
-from models.intent import IntentResult
+from core.models.intent import IntentResult
 
 
 class GraphState(TypedDict):
-    query: str                            # raw user input
-    intent: Optional[IntentResult]        # filled by IntentAgent
-    routed_to: Optional[str]             # filled by Router
-    agent_response: Optional[str]        # filled by downstream agent
-    error: Optional[str]                 # set on failure
+    query: str
+    intent: Optional[IntentResult]
+    routed_to: Optional[str]
+    agent_response: Optional[str]
+    error: Optional[str]

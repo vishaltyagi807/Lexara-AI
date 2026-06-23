@@ -1,4 +1,4 @@
-"""app.py — entrypoint. Classifies intent then streams the response."""
+"""app.py — CLI entrypoint. Classifies intent then streams the response."""
 import logging
 import sys
 import os
@@ -6,18 +6,16 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import cfg
+from graph import graph
+from nodes.response_agent import stream_response
 
 logging.basicConfig(
     level=cfg.log_level,
     format="%(levelname)-8s %(name)s — %(message)s",
 )
 
-from graph import graph
-from nodes.response_agent import stream_response
-
 
 def run(query: str) -> None:
-    """Classify intent, then stream the agent response."""
     result = graph.invoke({"query": query})
     intent = result.get("intent")
 
@@ -25,10 +23,7 @@ def run(query: str) -> None:
         print(f"\nError: {result['error']}")
         return
 
-    # Show routing info
     print(f"\n[{intent.query_type.upper()} | complexity={intent.complexity_score} | cost={intent.execution_cost}]")
-
-    # Stream the actual response
     stream_response(query, intent)
 
 
