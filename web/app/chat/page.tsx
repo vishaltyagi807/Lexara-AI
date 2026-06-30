@@ -21,37 +21,53 @@ import {
   Sparkles,
   ChevronRight,
   Shield,
+  Trash2,
+  RefreshCw,
+  Copy,
+  Check,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import LightRays from "@/components/backgrounds/LightRays";
+import { ChatMarkdown } from "@/components/chat/ChatMarkdown";
+
+
+
+
+
 
 type Msg = {
   id: string;
   role: "user" | "assistant";
   content: string;
   model?: string;
+  queryType?: string;
+  routedTo?: string;
+  streaming?: boolean;
 };
 
-const sidebarSections = [
-  { label: "New Chat", icon: Plus, primary: true },
-  { label: "Recent", icon: MessageSquare },
-  { label: "Projects", icon: FolderKanban },
-  { label: "Models", icon: Cpu },
-  { label: "Analytics", icon: BarChart3 },
-  { label: "Settings", icon: Settings },
-];
+type Session = {
+  id: string;
+  title: string;
+  createdAt: number;
+  messages: Msg[];
+};
 
-const recent = [
-  "Optimize embedding pipeline",
-  "Compare GPT-5 vs Claude 4",
-  "Refactor auth middleware",
-  "Cost forecast Q1 2036",
-  "Latency anomaly debug",
-];
+type IntentMeta = {
+  query_type: string;
+  complexity_score: number;
+  execution_cost: string;
+  routed_to: string;
+  model: string;
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const API_BASE = "http://localhost:8000/api/v1";
+const STORAGE_KEY = "lexara_sessions";
 
 const providersInfo = [
   { name: "OpenAI", conf: 91, cost: 88, lat: 76, cap: 95 },
-  { name: "Claude", conf: 96, cost: 72, lat: 81, cap: 98, selected: true },
+  { name: "Claude", conf: 96, cost: 72, lat: 81, cap: 98, selected: false },
   { name: "Gemini", conf: 84, cost: 91, lat: 88, cap: 89 },
   { name: "Groq", conf: 70, cost: 96, lat: 99, cap: 78 },
   { name: "DeepSeek", conf: 73, cost: 97, lat: 80, cap: 82 },
@@ -59,71 +75,309 @@ const providersInfo = [
 
 const routingSteps = [
   "Analyzing prompt complexity",
-  "Comparing 8 providers",
+  "Comparing providers",
   "Optimizing cost / latency",
-  "Selected Claude 4 Sonnet",
+  "Selecting best model",
   "Streaming response",
 ];
 
-export default function ChatApp() {
-  const [messages, setMessages] = useState<Msg[]>([
-    {
-      id: "1",
-      role: "user",
-      content:
-        "Help me design a token-efficient RAG pipeline for a 200M doc corpus.",
-    },
-    {
-      id: "2",
-      role: "assistant",
-      model: "Claude 4 Sonnet",
-      content:
-        "Great problem. For 200M docs, I'd recommend a tiered architecture:\n\n1. **Coarse retrieval** with a small, fast embedding model (e.g. bge-small) sharded across regions.\n2. **Re-rank** with a stronger cross-encoder only on the top 100.\n3. **Adaptive context window** — feed the LLM only the spans your re-ranker scored above threshold.\n\nLexaraAI would route the coarse step to Groq for sub-50ms latency, re-rank to OpenAI's embedding-3, and the final generation to Claude for reasoning.",
-    },
-  ]);
-  const [input, setInput] = useState("");
-  const [routing, setRouting] = useState(false);
-  const [step, setStep] = useState(0);
-  const endRef = useRef<HTMLDivElement>(null);
+// ─── Session helpers ──────────────────────────────────────────────────────────
 
+function loadSessions(): Session[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessions(sessions: Session[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+  } catch {}
+}
+
+function createSession(): Session {
+  return {
+    id: crypto.randomUUID(),
+    title: "New Chat",
+    createdAt: Date.now(),
+    messages: [],
+  };
+}
+
+function deriveTitle(text: string): string {
+  return text.trim().slice(0, 48) + (text.trim().length > 48 ? "…" : "");
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export default function ChatApp() {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [routingStep, setRoutingStep] = useState(0);
+  const [intent, setIntent] = useState<IntentMeta | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    const stored = loadSessions();
+    if (stored.length > 0) {
+      setSessions(stored);
+      setActiveId(stored[0].id);
+    } else {
+      const initial = createSession();
+      setSessions([initial]);
+      setActiveId(initial.id);
+    }
+  }, []);
+
+  // Persist sessions whenever they change
+  useEffect(() => {
+    if (sessions.length > 0) saveSessions(sessions);
+  }, [sessions]);
+
+  // Auto-scroll on new message
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, routing]);
+  }, [sessions, streaming]);
 
-  function send() {
-    if (!input.trim()) return;
-    const user: Msg = {
-      id: Math.random().toString(),
-      role: "user",
-      content: input,
-    };
-    setMessages((m) => [...m, user]);
+  const activeSession = sessions.find((s) => s.id === activeId) ?? null;
+
+  // ── Session management ──────────────────────────────────────────────────────
+
+  const newChat = useCallback(() => {
+    const s = createSession();
+    setSessions((prev) => [s, ...prev]);
+    setActiveId(s.id);
+    setIntent(null);
+    setError(null);
+  }, []);
+
+  const openSession = useCallback(
+    (id: string) => {
+      if (streaming) {
+        abortRef.current?.abort();
+        setStreaming(false);
+      }
+      setActiveId(id);
+      setIntent(null);
+      setError(null);
+    },
+    [streaming]
+  );
+
+  const deleteSession = useCallback(
+    (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== id);
+        if (id === activeId) {
+          if (next.length > 0) setActiveId(next[0].id);
+          else {
+            const fresh = createSession();
+            setTimeout(() => {
+              setSessions([fresh]);
+              setActiveId(fresh.id);
+            }, 0);
+            return [];
+          }
+        }
+        return next;
+      });
+    },
+    [activeId]
+  );
+
+  // ── Messaging ───────────────────────────────────────────────────────────────
+
+  const updateSession = useCallback(
+    (sessionId: string, updater: (s: Session) => Session) => {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? updater(s) : s))
+      );
+    },
+    []
+  );
+
+  const send = useCallback(async () => {
+    if (!input.trim() || streaming || !activeId) return;
+
+    const message = input.trim();
     setInput("");
-    setRouting(true);
-    setStep(0);
-    const iv = setInterval(
-      () => setStep((s) => (s + 1 >= routingSteps.length ? s : s + 1)),
-      600,
-    );
-    setTimeout(
-      () => {
-        clearInterval(iv);
-        setRouting(false);
-        setStep(0);
-        setMessages((m) => [
-          ...m,
-          {
-            id: Math.random().toString(),
-            role: "assistant",
-            model: "Claude 4 Sonnet",
-            content:
-              "Routed to Claude 4 Sonnet based on reasoning complexity. Here's the optimized response with the lowest expected cost across all eligible providers.",
-          },
-        ]);
-      },
-      routingSteps.length * 600 + 300,
-    );
-  }
+    setError(null);
+    setStreaming(true);
+    setRoutingStep(0);
+    setIntent(null);
+
+    const userMsg: Msg = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: message,
+    };
+
+    // Add user message; derive title from first message
+    updateSession(activeId, (s) => ({
+      ...s,
+      title: s.messages.length === 0 ? deriveTitle(message) : s.title,
+      messages: [...s.messages, userMsg],
+    }));
+
+    // Create placeholder assistant message for streaming
+    const assistantMsgId = crypto.randomUUID();
+    const placeholderMsg: Msg = {
+      id: assistantMsgId,
+      role: "assistant",
+      content: "",
+      streaming: true,
+    };
+    updateSession(activeId, (s) => ({
+      ...s,
+      messages: [...s.messages, placeholderMsg],
+    }));
+
+    // Animate routing steps
+    const iv = setInterval(() => {
+      setRoutingStep((s) =>
+        s + 1 < routingSteps.length ? s + 1 : s
+      );
+    }, 700);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const res = await fetch(`${API_BASE}/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          conversation_id: activeId,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      clearInterval(iv);
+      setRoutingStep(routingSteps.length - 1);
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+
+          // ── Robust SSE frame parser ─────────────────────────────────────
+          // The Python backend may embed raw \n inside data fields
+          // (non-standard but common). We collect continuation lines and
+          // join them so newlines inside tokens are preserved.
+          const sseLines = part.split("\n");
+          let event = "";
+          const dataLines: string[] = [];
+          let inData = false;
+
+          for (const sseLine of sseLines) {
+            if (sseLine.startsWith("event:")) {
+              event = sseLine.slice(6).trim();
+              inData = false;
+            } else if (sseLine.startsWith("data:")) {
+              dataLines.push(sseLine.slice(5));
+              inData = true;
+            } else if (inData) {
+              // Continuation of a data value (embedded \n from backend)
+              dataLines.push(sseLine);
+            }
+          }
+
+          // Join multiple data: lines per SSE spec (\n separator)
+          const rawData = dataLines.join("\n");
+
+          if (event === "metadata") {
+            try {
+              const parsed: IntentMeta = JSON.parse(rawData);
+              setIntent(parsed);
+              updateSession(activeId, (s) => ({
+                ...s,
+                messages: s.messages.map((m) =>
+                  m.id === assistantMsgId
+                    ? {
+                        ...m,
+                        model: parsed.model,
+                        queryType: parsed.query_type,
+                        routedTo: parsed.routed_to,
+                      }
+                    : m
+                ),
+              }));
+            } catch {}
+          } else if (event === "token") {
+            // Tokens are JSON-encoded on the backend to safely carry \n chars.
+            // Fall back to rawData if not valid JSON (legacy / plain text).
+            let token = rawData;
+            try { token = JSON.parse(rawData); } catch { /* raw string */ }
+            if (token) {
+              updateSession(activeId, (s) => ({
+                ...s,
+                messages: s.messages.map((m) =>
+                  m.id === assistantMsgId
+                    ? { ...m, content: m.content + token }
+                    : m
+                ),
+              }));
+            }
+          } else if (event === "error") {
+            setError(rawData || "An error occurred during streaming.");
+          }
+        }
+      }
+    } catch (err: unknown) {
+      clearInterval(iv);
+      if (err instanceof Error && err.name !== "AbortError") {
+        setError(
+          err.message.includes("Failed to fetch")
+            ? "Cannot connect to backend. Is it running on :8000?"
+            : err.message
+        );
+      }
+    } finally {
+      clearInterval(iv);
+      // Mark assistant message as done streaming
+      updateSession(activeId, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === assistantMsgId ? { ...m, streaming: false } : m
+        ),
+      }));
+      setStreaming(false);
+      setRoutingStep(0);
+    }
+  }, [input, streaming, activeId, updateSession]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="relative flex h-screen overflow-hidden bg-background text-foreground">
@@ -131,9 +385,10 @@ export default function ChatApp() {
         <LightRays className="absolute inset-0" />
       </div>
 
-      {/* SIDEBAR */}
+      {/* ── SIDEBAR ── */}
       <aside className="relative z-10 hidden w-64 flex-col border-r border-border/60 bg-background/60 backdrop-blur-2xl md:flex">
-        <div className="flex items-center justify-between px-4 py-4">
+        {/* Logo */}
+        <div className="flex items-center justify-between px-4 py-4 border-b border-border/40">
           <Link href="/" className="flex items-center gap-2">
             <div className="grid h-8 w-8 place-items-center rounded-lg bg-linear-to-br from-cyan to-violet">
               <Zap className="h-4 w-4 text-foreground" strokeWidth={2.5} />
@@ -143,160 +398,306 @@ export default function ChatApp() {
             </span>
           </Link>
         </div>
-        <div className="flex-1 overflow-y-auto scrollbar-thin px-3 pb-3 pt-2">
-          <div className="space-y-0.5">
-            {sidebarSections.map((s) => (
-              <button
-                key={s.label}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
-                  s.primary
-                    ? "bg-linear-to-r from-cyan/20 to-violet/15 text-foreground ring-1 ring-cyan/30 hover:from-cyan/30"
-                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
-                }`}
-              >
-                <s.icon className="h-4 w-4" />
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <div className="mt-6">
-            <div className="px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Recent
-            </div>
-            <div className="mt-2 space-y-0.5">
-              {recent.map((r, i) => (
-                <button
-                  key={i}
-                  className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-xs text-foreground/75 hover:bg-white/5 hover:text-foreground"
-                >
-                  <MessageSquare className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{r}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+
+        {/* New Chat button */}
+        <div className="px-3 pt-3">
+          <button
+            id="new-chat-btn"
+            onClick={newChat}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm bg-linear-to-r from-cyan/20 to-violet/15 text-foreground ring-1 ring-cyan/30 hover:from-cyan/30 transition"
+          >
+            <Plus className="h-4 w-4" />
+            New Chat
+          </button>
         </div>
+
+        {/* Sessions list */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-3 pb-3 pt-4">
+          {sessions.length === 0 ? (
+            <div className="text-center text-xs text-muted-foreground pt-8">
+              No sessions yet
+            </div>
+          ) : (
+            <>
+              <div className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                Recent
+              </div>
+              <div className="space-y-0.5">
+                {sessions.map((s) => (
+                  <motion.div
+                    key={s.id}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    onClick={() => openSession(s.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === "Enter" && openSession(s.id)}
+                    className={`group flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition cursor-pointer select-none ${
+                      s.id === activeId
+                        ? "bg-white/10 text-foreground ring-1 ring-white/15"
+                        : "text-foreground/70 hover:bg-white/5 hover:text-foreground"
+                    }`}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="flex-1 truncate">{s.title}</span>
+                    <button
+                      onClick={(e) => deleteSession(s.id, e)}
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition rounded"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </motion.div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Nav items */}
+        <div className="border-t border-border/40 px-3 py-3 space-y-0.5">
+          {[
+            { label: "Models", icon: Cpu },
+            { label: "Analytics", icon: BarChart3 },
+            { label: "Settings", icon: Settings },
+          ].map((item) => (
+            <button
+              key={item.label}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-white/5 hover:text-foreground transition"
+            >
+              <item.icon className="h-4 w-4" />
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {/* User */}
         <div className="border-t border-border/60 p-3">
           <div className="glass flex items-center gap-2 rounded-xl px-3 py-2">
             <div className="grid h-7 w-7 place-items-center rounded-full bg-linear-to-br from-cyan to-violet text-background">
               <User className="h-3.5 w-3.5" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium">alex@lexara.ai</div>
+              <div className="truncate text-xs font-medium">
+                {activeId?.slice(0, 8)}…
+              </div>
               <div className="text-[10px] text-muted-foreground">
-                Pro · 1M tokens left
+                Connected · Groq
               </div>
             </div>
           </div>
         </div>
       </aside>
 
-      {/* MAIN CHAT */}
+      {/* ── MAIN CHAT ── */}
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
-        {/* header */}
+        {/* Header */}
         <header className="flex items-center justify-between border-b border-border/60 bg-background/40 px-6 py-3 backdrop-blur-xl">
           <div>
             <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              Workspace
+              Session
             </div>
-            <div className="font-display text-base font-semibold">
-              Lexara AI Workspace
+            <div className="font-display text-base font-semibold truncate max-w-xs">
+              {activeSession?.title ?? "Lexara AI Workspace"}
             </div>
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <Pill icon={Cpu} label="Auto-route" value="Claude 4" />
-            <Pill icon={Sparkles} label="Mode" value="Balanced" />
-            <Pill icon={Gauge} label="Latency" value="318ms" />
-            <Pill icon={Coins} label="Cost" value="$0.0042" />
+            {intent && (
+              <>
+                <Pill
+                  icon={Cpu}
+                  label="Model"
+                  value={intent.model?.split("-").slice(0, 2).join("-") ?? "—"}
+                />
+                <Pill
+                  icon={Sparkles}
+                  label="Type"
+                  value={intent.query_type?.replace(/_/g, " ") ?? "—"}
+                />
+                <Pill
+                  icon={Gauge}
+                  label="Cost"
+                  value={intent.execution_cost ?? "—"}
+                />
+              </>
+            )}
+            {!intent && (
+              <>
+                <Pill icon={Cpu} label="Auto-route" value="Ready" />
+                <Pill icon={Sparkles} label="Mode" value="Balanced" />
+              </>
+            )}
           </div>
         </header>
 
-        {/* messages */}
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto scrollbar-thin px-6 py-8">
           <div className="mx-auto flex max-w-3xl flex-col gap-6">
-            {messages.map((m) => (
+            {/* Empty state */}
+            {activeSession?.messages.length === 0 && !streaming && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex flex-col items-center justify-center py-24 text-center"
+              >
+                <div className="grid h-16 w-16 place-items-center rounded-2xl bg-linear-to-br from-cyan/20 to-violet/15 ring-1 ring-cyan/30 mb-6">
+                  <Sparkles className="h-8 w-8 text-cyan" />
+                </div>
+                <h2 className="font-display text-2xl font-bold mb-2">
+                  How can LexaraAI help?
+                </h2>
+                <p className="text-muted-foreground text-sm max-w-sm">
+                  Ask anything. Your request is automatically routed to the
+                  best model across 8+ providers in real time.
+                </p>
+                <div className="mt-8 grid grid-cols-2 gap-3 text-left max-w-lg">
+                  {[
+                    "Explain the difference between RAG and fine-tuning",
+                    "Write a Python FastAPI auth middleware",
+                    "Compare GPT-4o vs Claude 3.5 for coding tasks",
+                    "Optimize my LLM prompt for cost efficiency",
+                  ].map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      onClick={() => setInput(suggestion)}
+                      className="glass rounded-xl p-3 text-xs text-left text-foreground/80 hover:text-foreground hover:bg-white/10 transition"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Messages */}
+            {activeSession?.messages.map((m) => (
               <MessageBubble key={m.id} m={m} />
             ))}
+
+            {/* Routing indicator */}
             <AnimatePresence>
-              {routing && (
+              {streaming &&
+                (activeSession?.messages.at(-1)?.content ?? "") === "" && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="glass-strong relative overflow-hidden rounded-2xl p-4"
+                  >
+                    <div className="absolute inset-0 bg-linear-to-r from-cyan/5 via-violet/5 to-transparent" />
+                    <div className="relative">
+                      <div className="mb-3 flex items-center gap-2 text-xs">
+                        <span className="relative flex h-2 w-2">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan" />
+                        </span>
+                        <span className="font-mono uppercase tracking-wider text-cyan">
+                          Routing
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {routingSteps.map((s, i) => (
+                          <div
+                            key={s}
+                            className={`flex items-center gap-2 text-xs transition ${
+                              i <= routingStep
+                                ? "text-foreground"
+                                : "text-muted-foreground/50"
+                            }`}
+                          >
+                            <ChevronRight
+                              className={`h-3 w-3 ${
+                                i === routingStep
+                                  ? "animate-pulse text-cyan"
+                                  : ""
+                              }`}
+                            />
+                            {s}
+                            {i === routingStep ? "..." : ""}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Error banner */}
+            <AnimatePresence>
+              {error && (
                 <motion.div
-                  initial={{ opacity: 0, y: 8 }}
+                  initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
-                  className="glass-strong relative overflow-hidden rounded-2xl p-4"
+                  className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive flex items-center justify-between gap-3"
                 >
-                  <div className="absolute inset-0 bg-linear-to-r from-cyan/5 via-violet/5 to-transparent" />
-                  <div className="relative">
-                    <div className="mb-3 flex items-center gap-2 text-xs">
-                      <span className="relative flex h-2 w-2">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan opacity-75" />
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan" />
-                      </span>
-                      <span className="font-mono uppercase tracking-wider text-cyan">
-                        Routing
-                      </span>
-                    </div>
-                    <div className="space-y-1.5">
-                      {routingSteps.map((s, i) => (
-                        <div
-                          key={s}
-                          className={`flex items-center gap-2 text-xs transition ${i <= step ? "text-foreground" : "text-muted-foreground/50"}`}
-                        >
-                          <ChevronRight
-                            className={`h-3 w-3 ${i === step ? "animate-pulse text-cyan" : ""}`}
-                          />
-                          {s}
-                          {i === step ? "..." : ""}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <span>{error}</span>
+                  <button
+                    onClick={() => setError(null)}
+                    className="shrink-0 text-destructive/70 hover:text-destructive transition"
+                  >
+                    ✕
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>
+
             <div ref={endRef} />
           </div>
         </div>
 
-        {/* input */}
+        {/* Input */}
         <div className="border-t border-border/60 bg-background/40 px-6 py-4 backdrop-blur-xl">
-          <div className="mx-auto max-w-5xl">
-            <div className="glass-strong relative bg-white flex items-center justify-center gap-2 rounded-2xl p-2 ring-1 ring-white/5 focus-within:ring-cyan/40">
-              <div className="flex gap-1 pl-2 text-muted-foreground items-center justify-center">
+          <div className="mx-auto max-w-3xl">
+            <div className="glass-strong relative flex items-end gap-2 rounded-2xl p-2 ring-1 ring-white/5 focus-within:ring-cyan/40 transition">
+              <div className="flex gap-1 pl-2 text-muted-foreground items-center">
                 <IconBtn icon={Paperclip} />
                 <IconBtn icon={ImageIcon} />
                 <IconBtn icon={Mic} />
               </div>
               <textarea
+                id="chat-input"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
+                onKeyDown={handleKeyDown}
                 rows={1}
-                placeholder="Ask anything — LexaraAI will route to the best model..."
-                className="min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                disabled={streaming}
+                placeholder={
+                  streaming
+                    ? "Generating response…"
+                    : "Ask anything — LexaraAI will route to the best model..."
+                }
+                className="min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none disabled:opacity-50"
+                style={{ maxHeight: "200px", overflowY: "auto" }}
               />
-              <button
-                onClick={send}
-                disabled={!input.trim()}
-                className="grid h-9 w-9 place-items-center rounded-xl bg-linear-to-br from-cyan to-violet text-background shadow-primary shadow transition-all hover:scale-105 disabled:shadow-none disabled:opacity-40"
-              >
-                <Send className="h-4 w-4 text-foreground" />
-              </button>
+              {streaming ? (
+                <button
+                  onClick={() => abortRef.current?.abort()}
+                  className="grid h-9 w-9 place-items-center rounded-xl bg-destructive/80 text-white shadow transition-all hover:scale-105"
+                >
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                </button>
+              ) : (
+                <button
+                  id="send-btn"
+                  onClick={send}
+                  disabled={!input.trim()}
+                  className="grid h-9 w-9 place-items-center rounded-xl bg-linear-to-br from-cyan to-violet text-background shadow-primary shadow transition-all hover:scale-105 disabled:shadow-none disabled:opacity-40"
+                >
+                  <Send className="h-4 w-4 text-foreground" />
+                </button>
+              )}
             </div>
             <div className="mt-2 text-center text-[10px] text-muted-foreground">
               Auto-routing across 8 providers · Press{" "}
-              <kbd className="rounded bg-white/10 px-1">Enter</kbd> to send
+              <kbd className="rounded bg-white/10 px-1">Enter</kbd> to send ·{" "}
+              <kbd className="rounded bg-white/10 px-1">Shift+Enter</kbd> for
+              newline
             </div>
           </div>
         </div>
       </main>
 
-      {/* INTELLIGENCE PANEL */}
+      {/* ── INTELLIGENCE PANEL ── */}
       <aside className="relative z-10 hidden w-80 flex-col border-l border-border/60 bg-background/60 backdrop-blur-2xl xl:flex">
         <div className="border-b border-border/60 px-5 py-4">
           <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
@@ -307,59 +708,85 @@ export default function ChatApp() {
           </div>
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto scrollbar-thin p-4">
-          <Panel title="Provider Selection" icon={Cpu}>
-            <div className="space-y-2">
-              {providersInfo.map((p) => (
-                <div
-                  key={p.name}
-                  className={`rounded-xl p-2.5 ${p.selected ? "bg-linear-to-r from-cyan/15 to-violet/10 ring-1 ring-cyan/30" : "bg-white/3"}`}
-                >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium">{p.name}</span>
-                    {p.selected && (
-                      <span className="rounded-full bg-cyan/20 px-2 py-0.5 text-[9px] font-semibold uppercase text-cyan">
-                        Selected
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-2 grid grid-cols-4 gap-1.5 text-[9px]">
-                    {[
-                      ["Conf", p.conf],
-                      ["Cost", p.cost],
-                      ["Lat", p.lat],
-                      ["Cap", p.cap],
-                    ].map(([k, v]) => (
-                      <div key={k as string}>
-                        <div className="text-muted-foreground">{k}</div>
-                        <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-white/10">
-                          <div
-                            className="h-full bg-linear-to-r from-cyan to-violet"
-                            style={{ width: `${v}%` }}
-                          />
+          {/* Intent info from real API */}
+          <Panel title="Routing Decision" icon={Cpu}>
+            {intent ? (
+              <div className="space-y-2">
+                <InfoRow label="Model" value={intent.model} highlight />
+                <InfoRow
+                  label="Query Type"
+                  value={intent.query_type?.replace(/_/g, " ")}
+                />
+                <InfoRow label="Routed To" value={intent.routed_to} />
+                <InfoRow label="Cost Tier" value={intent.execution_cost} />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {providersInfo.map((p) => (
+                  <div
+                    key={p.name}
+                    className={`rounded-xl p-2.5 ${
+                      p.selected
+                        ? "bg-linear-to-r from-cyan/15 to-violet/10 ring-1 ring-cyan/30"
+                        : "bg-white/3"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium">{p.name}</span>
+                      {p.selected && (
+                        <span className="rounded-full bg-cyan/20 px-2 py-0.5 text-[9px] font-semibold uppercase text-cyan">
+                          Selected
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 grid grid-cols-4 gap-1.5 text-[9px]">
+                      {[
+                        ["Conf", p.conf],
+                        ["Cost", p.cost],
+                        ["Lat", p.lat],
+                        ["Cap", p.cap],
+                      ].map(([k, v]) => (
+                        <div key={k as string}>
+                          <div className="text-muted-foreground">{k}</div>
+                          <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-white/10">
+                            <div
+                              className="h-full bg-linear-to-r from-cyan to-violet"
+                              style={{ width: `${v}%` }}
+                            />
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </Panel>
 
-          <Panel title="Token Usage" icon={Activity}>
-            <MiniSpark color="oklch(0.85 0.16 200)" />
-            <div className="mt-2 flex justify-between text-xs">
-              <span className="text-muted-foreground">This session</span>
-              <span className="font-mono">12,847</span>
+          <Panel title="Session Stats" icon={Activity}>
+            <div className="space-y-2 text-xs">
+              <InfoRow
+                label="Messages"
+                value={String(activeSession?.messages.length ?? 0)}
+              />
+              <InfoRow
+                label="Session ID"
+                value={activeId?.slice(0, 12) + "…"}
+              />
+              <InfoRow
+                label="Sessions"
+                value={String(sessions.length)}
+              />
             </div>
           </Panel>
 
           <Panel title="Request Cost" icon={Coins}>
             <div className="flex items-baseline justify-between">
               <span className="font-display text-2xl font-bold text-gradient">
-                $0.0042
+                {intent?.execution_cost ?? "—"}
               </span>
               <span className="text-[10px] text-emerald-400">
-                -83% vs GPT-5
+                auto-optimized
               </span>
             </div>
           </Panel>
@@ -378,10 +805,18 @@ export default function ChatApp() {
                 >
                   <span>{n}</span>
                   <span
-                    className={`flex items-center gap-1.5 ${s === "operational" ? "text-emerald-400" : "text-yellow-400"}`}
+                    className={`flex items-center gap-1.5 ${
+                      s === "operational"
+                        ? "text-emerald-400"
+                        : "text-yellow-400"
+                    }`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ${s === "operational" ? "bg-emerald-400" : "bg-yellow-400"}`}
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        s === "operational"
+                          ? "bg-emerald-400"
+                          : "bg-yellow-400"
+                      }`}
                     />
                     {s}
                   </span>
@@ -390,21 +825,48 @@ export default function ChatApp() {
             </div>
           </Panel>
 
-          <Panel title="Budget Tracking" icon={Gauge}>
-            <div className="mb-1 flex justify-between text-xs">
-              <span className="text-muted-foreground">$42 / $500 mo</span>
-              <span className="font-mono text-cyan">8.4%</span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full bg-linear-to-r from-cyan to-violet"
-                style={{ width: "8.4%" }}
-              />
+          <Panel title="Stream Status" icon={Gauge}>
+            <div className="flex items-center gap-2 text-xs">
+              <span
+                className={`relative flex h-2 w-2 ${
+                  streaming ? "block" : "hidden"
+                }`}
+              >
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan" />
+              </span>
+              <span
+                className={
+                  streaming ? "text-cyan font-mono" : "text-muted-foreground"
+                }
+              >
+                {streaming ? "Streaming…" : "Idle"}
+              </span>
             </div>
           </Panel>
         </div>
       </aside>
     </div>
+  );
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function MsgCopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text).catch(() => {});
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      title="Copy response"
+      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] text-muted-foreground hover:bg-white/5 hover:text-foreground transition"
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      <span>{copied ? "Copied!" : "Copy"}</span>
+    </button>
   );
 }
 
@@ -416,12 +878,22 @@ function MessageBubble({ m }: { m: Msg }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       className={`flex ${user ? "justify-end" : "justify-start"}`}
     >
-      <div className={`max-w-[85%] ${user ? "order-2" : ""}`}>
-        {!user && m.model && (
-          <div className="mb-1.5 flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-            <Sparkles className="h-3 w-3 text-cyan" />
-            <span className="text-cyan">{m.model}</span>
-            <span>· routed by LexaraAI</span>
+      <div className={`max-w-[85%] w-full ${user ? "flex justify-end" : ""}`}>
+        {!user && (
+          <div className="mb-1.5 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <Sparkles className="h-3 w-3 text-cyan" />
+              {m.model && (
+                <span className="text-cyan">{m.model.split("-").slice(0, 3).join("-")}</span>
+              )}
+              {m.routedTo && (
+                <span>· {m.routedTo.replace(/_/g, " ")}</span>
+              )}
+              {!m.model && !m.routedTo && <span className="text-cyan">LexaraAI</span>}
+            </div>
+            {m.content && !m.streaming && (
+              <MsgCopyBtn text={m.content} />
+            )}
           </div>
         )}
         <div
@@ -431,7 +903,17 @@ function MessageBubble({ m }: { m: Msg }) {
               : "glass-strong rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed text-foreground/95"
           }
         >
-          <div className="whitespace-pre-wrap">{m.content}</div>
+          {m.streaming && m.content === "" ? (
+            <span className="inline-flex gap-1 items-center text-muted-foreground">
+              <span className="animate-bounce" style={{ animationDelay: "0ms" }}>●</span>
+              <span className="animate-bounce" style={{ animationDelay: "150ms" }}>●</span>
+              <span className="animate-bounce" style={{ animationDelay: "300ms" }}>●</span>
+            </span>
+          ) : user ? (
+            <div className="whitespace-pre-wrap text-sm">{m.content}</div>
+          ) : (
+            <ChatMarkdown content={m.content} streaming={m.streaming} />
+          )}
         </div>
       </div>
     </motion.div>
@@ -443,7 +925,7 @@ function Pill({
   label,
   value,
 }: {
-  icon: any;
+  icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string;
 }) {
@@ -456,7 +938,7 @@ function Pill({
   );
 }
 
-function IconBtn({ icon: Icon }: { icon: any }) {
+function IconBtn({ icon: Icon }: { icon: React.ComponentType<{ className?: string }> }) {
   return (
     <button className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-white/5 hover:text-foreground">
       <Icon className="h-4 w-4" />
@@ -470,7 +952,7 @@ function Panel({
   children,
 }: {
   title: string;
-  icon: any;
+  icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
 }) {
   return (
@@ -484,28 +966,21 @@ function Panel({
   );
 }
 
-function MiniSpark({ color }: { color: string }) {
-  const [pts, setPts] = useState<string>("");
-
-  useEffect(() => {
-    const data = Array.from({ length: 30 }, () => 20 + Math.random() * 60);
-    const generatedPts = data
-      .map((v, i) => `${(i / (data.length - 1)) * 100},${100 - v}`)
-      .join(" ");
-    setPts(generatedPts);
-  }, []);
-
-  if (!pts) {
-    return <div className="h-12 w-full" />;
-  }
-
+function InfoRow({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
   return (
-    <svg
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-      className="h-12 w-full"
-    >
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" />
-    </svg>
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={highlight ? "text-cyan font-mono font-medium" : "font-mono"}>
+        {value}
+      </span>
+    </div>
   );
 }

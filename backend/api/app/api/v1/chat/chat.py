@@ -137,8 +137,15 @@ def _extract_intent(state: GraphState) -> IntentResult:
 
 
 def _sse_line(chunk: StreamChunk) -> str:
-    """Format a single SSE frame."""
-    return f"event:{chunk.event}\ndata:{chunk.data}\n\n"
+    """Format a single SSE frame.
+
+    The SSE spec forbids literal newlines inside a data: field.
+    We encode non-scalar data (or data with embedded newlines) as JSON
+    so every event is guaranteed to be a single-line data: value.
+    """
+    # Safely encode the data value; preserves all unicode & newlines.
+    safe_data = json.dumps(chunk.data)
+    return f"event:{chunk.event}\ndata:{safe_data}\n\n"
 
 
 async def _stream_tokens(

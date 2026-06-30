@@ -627,7 +627,7 @@ export default function Landing() {
         <div className="mx-auto grid max-w-7xl gap-8 md:grid-cols-5">
           <div className="md:col-span-2">
             <div className="flex items-center gap-2">
-              <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-cyan to-violet">
+              <div className="grid h-8 w-8 place-items-center rounded-lg bg-linear-to-br from-cyan to-violet">
                 <Zap className="h-4 w-4 text-background" strokeWidth={2.5} />
               </div>
               <span className="font-display text-lg font-semibold">
@@ -699,16 +699,19 @@ function SectionHeader({
 function FakeChart() {
   const data = Array.from(
     { length: 40 },
-    (_, i) => 30 + Math.sin(i / 3) * 12 + Math.random() * 14,
+    (_, i) => 30 + Math.sin(i / 3) * 12 + (Math.abs(Math.sin(i * 9.13)) % 1) * 14,
   );
   const max = Math.max(...data);
   const pts = data
-    .map((v, i) => `${(i / (data.length - 1)) * 100},${100 - (v / max) * 90}`)
+    .map(
+      (v, i) =>
+        `${((i / (data.length - 1)) * 100).toFixed(4)},${(100 - (v / max) * 90).toFixed(4)}`,
+    )
     .join(" ");
   const pts2 = data
     .map(
       (v, i) =>
-        `${(i / (data.length - 1)) * 100},${100 - ((v * 0.6) / max) * 90}`,
+        `${((i / (data.length - 1)) * 100).toFixed(4)},${(100 - ((v * 0.6) / max) * 90).toFixed(4)}`,
     )
     .join(" ");
   return (

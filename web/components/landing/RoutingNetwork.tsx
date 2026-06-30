@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 
 const providers = [
@@ -13,12 +13,18 @@ const providers = [
 ];
 
 export function RoutingNetwork() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const cx = 200;
   const cy = 200;
   const r = 140;
+
   return (
     <div className="relative mx-auto aspect-square w-full max-w-md">
-      <div className="absolute inset-0 animate-pulse-glow rounded-full bg-gradient-to-br from-cyan/30 via-violet/20 to-transparent blur-3xl" />
+      <div className="absolute inset-0 animate-pulse-glow rounded-full bg-linear-to-br from-cyan/30 via-violet/20 to-transparent blur-3xl" />
       <svg viewBox="0 0 400 400" className="relative h-full w-full">
         <defs>
           <linearGradient id="beam" x1="0" x2="1">
@@ -37,26 +43,27 @@ export function RoutingNetwork() {
           <circle key={rr} cx={cx} cy={cy} r={rr} fill="none" stroke="oklch(1 0 0 / 0.06)" />
         ))}
 
-        {/* beams */}
-        {providers.map((p, i) => {
-          const a = (p.angle * Math.PI) / 180;
-          const x = cx + Math.cos(a) * r;
-          const y = cy + Math.sin(a) * r;
-          return (
-            <g key={p.name}>
-              <line
-                x1={cx}
-                y1={cy}
-                x2={x}
-                y2={y}
-                stroke="url(#beam)"
-                strokeWidth="1.5"
-                strokeDasharray="6 6"
-                style={{ animation: `beam-flow 3s linear infinite`, animationDelay: `${i * 0.2}s` }}
-              />
-            </g>
-          );
-        })}
+        {/* beams - render only after mounting to ensure same initial layout during SSR */}
+        {mounted &&
+          providers.map((p, i) => {
+            const a = (p.angle * Math.PI) / 180;
+            const x = cx + Math.cos(a) * r;
+            const y = cy + Math.sin(a) * r;
+            return (
+              <g key={p.name}>
+                <line
+                  x1={cx}
+                  y1={cy}
+                  x2={Number(x.toFixed(4))}
+                  y2={Number(y.toFixed(4))}
+                  stroke="url(#beam)"
+                  strokeWidth="1.5"
+                  strokeDasharray="6 6"
+                  style={{ animation: `beam-flow 3s linear infinite`, animationDelay: `${i * 0.2}s` }}
+                />
+              </g>
+            );
+          })}
 
         {/* center core */}
         <circle cx={cx} cy={cy} r="32" fill="url(#core)" opacity="0.9" />
@@ -69,26 +76,30 @@ export function RoutingNetwork() {
         </text>
       </svg>
 
-      {/* provider nodes */}
-      {providers.map((p, i) => {
-        const a = (p.angle * Math.PI) / 180;
-        return (
-          <motion.div
-            key={p.name}
-            initial={{ opacity: 0, scale: 0.5 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.1 * i, duration: 0.5 }}
-            className="glass absolute flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-mono"
-            style={{
-              left: `calc(50% + ${Math.cos(a) * 42}% - 40px)`,
-              top: `calc(50% + ${Math.sin(a) * 42}% - 14px)`,
-            }}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald shadow-[0_0_8px_oklch(0.78_0.17_165)]" />
-            {p.name}
-          </motion.div>
-        );
-      })}
+      {/* provider nodes - render only after mounting to ensure same initial layout during SSR */}
+      {mounted &&
+        providers.map((p, i) => {
+          const a = (p.angle * Math.PI) / 180;
+          const leftPercent = 50 + Math.cos(a) * 42;
+          const topPercent = 50 + Math.sin(a) * 42;
+          return (
+            <motion.div
+              key={p.name}
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.1 * i, duration: 0.5 }}
+              className="glass absolute flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-mono"
+              style={{
+                left: `calc(${leftPercent.toFixed(4)}% - 40px)`,
+                top: `calc(${topPercent.toFixed(4)}% - 14px)`,
+              }}
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald shadow-[0_0_8px_oklch(0.78_0.17_165)]" />
+              {p.name}
+            </motion.div>
+          );
+        })}
     </div>
   );
 }
+

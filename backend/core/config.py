@@ -8,7 +8,7 @@ load_dotenv()
 class Config:
     model_name: str = "llama-3.3-70b-versatile"
     temperature: float = 0.0
-    max_tokens: int = 1024
+    max_tokens: int = 4096
     log_level: str = "INFO"
 
     # Maps intent → agent label (extend here to add new agents)
