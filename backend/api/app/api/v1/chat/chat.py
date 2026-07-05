@@ -48,9 +48,12 @@ from core.registry.model_registry import get_model_for
 from core.prompts.response import get_prompt_for
 from core.config import cfg
 from core.graph.state import GraphState
+from core.conversation.service import ConversationService
+from app.db.session import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, SystemMessage as LangChainSystemMessage
 from functools import lru_cache
 
 # ── Logger ────────────────────────────────────────────────────────────────────
@@ -58,6 +61,8 @@ log = logging.getLogger(__name__)
 
 # ── Router ────────────────────────────────────────────────────────────────────
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+_conv_service = ConversationService()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,12 +126,19 @@ def get_groq_llm(request: ChatRequest = Depends()) -> ChatGroq:
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _run_graph(query: str) -> GraphState:
+async def _run_graph(query: str, chat_history: list[Any] | None = None, summary: str | None = None) -> GraphState:
     """
     Run the synchronous LangGraph in a thread-pool.
     graph.invoke() is blocking — asyncio.to_thread() prevents event-loop stall.
     """
-    return await asyncio.to_thread(graph.invoke, {"query": query})
+    return await asyncio.to_thread(
+        graph.invoke,
+        {
+            "query": query,
+            "chat_history": chat_history,
+            "summary": summary,
+        }
+    )
 
 
 def _extract_intent(state: GraphState) -> IntentResult:
@@ -153,6 +165,9 @@ async def _stream_tokens(
     intent: IntentResult,
     conversation_id: str,
     model_override: Optional[str],
+    db: AsyncSession,
+    messages_history: list[Any],
+    summary: Optional[str],
 ) -> AsyncIterator[str]:
     """
     Core SSE generator.
@@ -162,10 +177,12 @@ async def _stream_tokens(
     system_prompt = get_prompt_for(intent.query_type)
     llm = _get_llm(model_name)
 
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=query),
-    ]
+    # Hydrate messages with history + summary
+    messages = [SystemMessage(content=system_prompt)]
+    if summary:
+        messages.append(LangChainSystemMessage(content=f"Summary of previous conversation: {summary}"))
+    messages.extend(messages_history)
+    messages.append(HumanMessage(content=query))
 
     # ── event: start ──────────────────────────────────────────────────────────
     yield _sse_line(StreamChunk(
@@ -188,15 +205,41 @@ async def _stream_tokens(
     ))
 
     # ── event: token × N ─────────────────────────────────────────────────────
+    full_response = ""
+    t_start = time.monotonic()
     try:
         async for chunk in llm.astream(messages):
             token: str = chunk.content
             if token:
+                full_response += token
                 yield _sse_line(StreamChunk(
                     event="token",
                     data=token,
                     conversation_id=conversation_id,
                 ))
+
+        # Successfully streamed the entire response: persist in PostgreSQL
+        latency_ms = int((time.monotonic() - t_start) * 1000)
+        prompt_tokens = len(query.split())  # simple fallback estimation
+        completion_tokens = len(full_response.split())
+
+        interaction_metadata = {
+            "provider": "groq",
+            "model": model_name,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "latency_ms": latency_ms,
+            "finish_reason": "stop",
+        }
+
+        await _conv_service.save_interaction(
+            db,
+            conversation_id,
+            user_content=query,
+            assistant_content=full_response,
+            metadata=interaction_metadata,
+        )
 
     except asyncio.CancelledError:
         log.warning("Stream cancelled | conversation_id=%s", conversation_id)
@@ -235,15 +278,20 @@ async def health() -> dict:
 
 
 @router.post("/", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
+async def chat(
+    req: ChatRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ChatResponse:
     """
     Non-streaming chat endpoint.
 
     Flow:
-      1. Run LangGraph (orchestrator → intent_agent → router) in thread-pool.
-      2. Extract IntentResult from state.
-      3. Call ChatGroq.ainvoke() with the right model + system prompt.
-      4. Return structured ChatResponse.
+      1. Load conversation history and summary from DB/Cache.
+      2. Run LangGraph (orchestrator → intent_agent → policy_agent → router) in thread-pool.
+      3. Extract IntentResult from state.
+      4. Call ChatGroq.ainvoke() with system prompt + summary + history + query.
+      5. Save interaction atomically to DB and invalidate cache.
+      6. Return structured ChatResponse.
     """
     log.info(
         "POST /chat | conversation_id=%s | user_id=%s",
@@ -252,9 +300,14 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     t0 = time.monotonic()
 
+    # Load history & summary from ConversationService
+    messages_history, summary = await _conv_service.load_conversation_history(
+        db, req.conversation_id, req.user_id
+    )
+
     # ── Step 1: classify intent via graph ─────────────────────────────────────
     try:
-        state: GraphState = await _run_graph(req.message)
+        state: GraphState = await _run_graph(req.message, chat_history=messages_history, summary=summary)
     except Exception as exc:
         log.error("Graph execution failed | conversation_id=%s | error=%s", req.conversation_id, exc)
         raise HTTPException(status_code=500, detail="Graph execution failed.")
@@ -277,10 +330,11 @@ async def chat(req: ChatRequest) -> ChatResponse:
         req.conversation_id, model_name,
     )
 
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=req.message),
-    ]
+    messages = [SystemMessage(content=system_prompt)]
+    if summary:
+        messages.append(LangChainSystemMessage(content=f"Summary of previous conversation: {summary}"))
+    messages.extend(messages_history)
+    messages.append(HumanMessage(content=req.message))
 
     try:
         ai_msg = await llm.ainvoke(messages)
@@ -295,6 +349,30 @@ async def chat(req: ChatRequest) -> ChatResponse:
         req.conversation_id, latency_ms,
     )
 
+    # Save interaction atomically to DB and invalidate cache
+    prompt_tokens = getattr(ai_msg, "response_metadata", {}).get("token_usage", {}).get("prompt_tokens")
+    completion_tokens = getattr(ai_msg, "response_metadata", {}).get("token_usage", {}).get("completion_tokens")
+    total_tokens = getattr(ai_msg, "response_metadata", {}).get("token_usage", {}).get("total_tokens")
+    finish_reason = getattr(ai_msg, "response_metadata", {}).get("finish_reason")
+
+    interaction_metadata = {
+        "provider": "groq",
+        "model": model_name,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "latency_ms": latency_ms,
+        "finish_reason": finish_reason,
+    }
+
+    await _conv_service.save_interaction(
+        db,
+        req.conversation_id,
+        user_content=req.message,
+        assistant_content=response_text,
+        metadata=interaction_metadata,
+    )
+
     return ChatResponse(
         conversation_id=req.conversation_id,
         user_id=req.user_id,
@@ -306,30 +384,33 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
 
 @router.post("/stream")
-async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
+async def chat_stream(
+    req: ChatRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
     """
     SSE streaming endpoint — ChatGPT-style token-by-token response.
 
     Flow:
-      1. Run LangGraph in thread-pool to get IntentResult.
-      2. Open ChatGroq.astream() with correct model + system prompt.
-      3. Yield SSE frames: start → metadata → token × N → done | error.
-
-    SSE event types:
-      event:start    — stream opened
-      event:metadata — intent classification + routing info (JSON)
-      event:token    — one text chunk
-      event:error    — error message string
-      event:done     — stream complete
+      1. Load conversation history and summary.
+      2. Run LangGraph in thread-pool to get IntentResult.
+      3. Open ChatGroq.astream() with correct model + system prompt + history.
+      4. Yield SSE frames: start → metadata → token × N → done | error.
     """
     log.info(
         "POST /chat/stream | conversation_id=%s | user_id=%s",
         req.conversation_id, req.user_id,
     )
 
+    # Load history & summary from ConversationService
+    messages_history, summary = await _conv_service.load_conversation_history(
+        db, req.conversation_id, req.user_id
+    )
+
     # ── Step 1: classify intent ───────────────────────────────────────────────
     try:
-        state: GraphState = await _run_graph(req.message)
+        state: GraphState = await _run_graph(req.message, chat_history=messages_history, summary=summary)
     except Exception as exc:
         log.error(
             "Graph execution failed | conversation_id=%s | error=%s",
@@ -353,6 +434,9 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
             intent=intent,
             conversation_id=req.conversation_id,
             model_override=req.model,
+            db=db,
+            messages_history=messages_history,
+            summary=summary,
         ):
             # Stop if client disconnected
             if await request.is_disconnected():
@@ -369,3 +453,131 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
             "Connection": "keep-alive",
         },
     )
+
+
+@router.get("/history")
+async def get_conversations_history(
+    user_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    search: Optional[str] = None,
+    include_archived: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve paginated conversation list for a user."""
+    convs = await _conv_service.repo.get_user_conversations(
+        db, user_id=user_id, limit=limit, offset=offset, search=search, include_archived=include_archived
+    )
+    return [
+        {
+            "id": str(c.id),
+            "title": c.title,
+            "summary": c.summary,
+            "is_archived": c.is_archived,
+            "is_pinned": c.is_pinned,
+            "created_at": c.created_at.isoformat(),
+            "updated_at": c.updated_at.isoformat(),
+        }
+        for c in convs
+    ]
+
+
+@router.get("/{conversation_id}")
+async def get_conversation_details(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve full messages list for a conversation."""
+    conv = await _conv_service.repo.get_or_create_conversation(db, conversation_id)
+    messages = await _conv_service.repo.get_messages(db, conversation_id, limit=100)
+    return {
+        "id": str(conv.id),
+        "title": conv.title,
+        "summary": conv.summary,
+        "is_archived": conv.is_archived,
+        "is_pinned": conv.is_pinned,
+        "messages": [
+            {
+                "id": str(m.id),
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.isoformat(),
+                "provider": m.provider,
+                "model": m.model,
+            }
+            for m in messages
+        ]
+    }
+
+
+@router.put("/{conversation_id}")
+async def rename_conversation(
+    conversation_id: str,
+    title: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Rename conversation title manually."""
+    await _conv_service.repo.rename_conversation(db, conversation_id, title)
+    await _conv_service.cache.invalidate_cache(conversation_id)
+    return {"status": "ok", "message": "Conversation renamed successfully."}
+
+
+@router.delete("/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft delete conversation."""
+    await _conv_service.repo.soft_delete_conversation(db, conversation_id, is_deleted=True)
+    await _conv_service.cache.invalidate_cache(conversation_id)
+    return {"status": "ok", "message": "Conversation soft deleted."}
+
+
+@router.post("/{conversation_id}/archive")
+async def archive_conversation(
+    conversation_id: str,
+    is_archived: bool = True,
+    db: AsyncSession = Depends(get_db),
+):
+    """Archive conversation."""
+    await _conv_service.repo.archive_conversation(db, conversation_id, is_archived=is_archived)
+    await _conv_service.cache.invalidate_cache(conversation_id)
+    return {"status": "ok", "message": "Conversation archived."}
+
+
+@router.post("/{conversation_id}/restore")
+async def restore_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore soft deleted/archived conversation."""
+    await _conv_service.repo.soft_delete_conversation(db, conversation_id, is_deleted=False)
+    await _conv_service.repo.archive_conversation(db, conversation_id, is_archived=False)
+    await _conv_service.cache.invalidate_cache(conversation_id)
+    return {"status": "ok", "message": "Conversation restored."}
+
+
+@router.get("/{conversation_id}/export")
+async def export_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Export conversation history as JSON."""
+    from datetime import datetime, timezone
+    conv = await _conv_service.repo.get_or_create_conversation(db, conversation_id)
+    messages = await _conv_service.repo.get_messages(db, conversation_id, limit=200)
+    return {
+        "export_timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "conversation_id": str(conv.id),
+        "title": conv.title,
+        "summary": conv.summary,
+        "history": [
+            {
+                "role": m.role,
+                "content": m.content,
+                "timestamp": m.created_at.isoformat(),
+                "metadata": m.metadata_payload,
+            }
+            for m in messages
+        ]
+    }

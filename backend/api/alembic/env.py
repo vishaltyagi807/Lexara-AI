@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import app.models.user
 import core.agents.policy.repository
+import core.conversation.models
 
 config = context.config
 
