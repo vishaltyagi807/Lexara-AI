@@ -44,10 +44,10 @@ from pydantic import BaseModel, Field
 # ── Core layer imports (no business logic duplicated here) ────────────────────
 from core.graph import graph                               # compiled LangGraph
 from core.models.intent import IntentResult
-from core.models.model_registry import get_model_for
-from core.models.agent_prompts import get_prompt_for
+from core.registry.model_registry import get_model_for
+from core.prompts.response import get_prompt_for
 from core.config import cfg
-from core.state import GraphState
+from core.graph.state import GraphState
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -137,8 +137,15 @@ def _extract_intent(state: GraphState) -> IntentResult:
 
 
 def _sse_line(chunk: StreamChunk) -> str:
-    """Format a single SSE frame."""
-    return f"event:{chunk.event}\ndata:{chunk.data}\n\n"
+    """Format a single SSE frame.
+
+    The SSE spec forbids literal newlines inside a data: field.
+    We encode non-scalar data (or data with embedded newlines) as JSON
+    so every event is guaranteed to be a single-line data: value.
+    """
+    # Safely encode the data value; preserves all unicode & newlines.
+    safe_data = json.dumps(chunk.data)
+    return f"event:{chunk.event}\ndata:{safe_data}\n\n"
 
 
 async def _stream_tokens(
