@@ -36,6 +36,7 @@ checkpoints/
 memory/
 storage/
 cache/
+!backend/core/cache
 
 # SQLite databases
 *.db

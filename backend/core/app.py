@@ -5,14 +5,16 @@ import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import cfg
-from graph import graph
-from nodes.response_agent import stream_response
+from core.config import cfg
+from core.graph import graph
+from core.agents.response.service import ResponseService
 
 logging.basicConfig(
     level=cfg.log_level,
     format="%(levelname)-8s %(name)s — %(message)s",
 )
+
+_response_service = ResponseService()
 
 
 def run(query: str) -> None:
@@ -24,7 +26,7 @@ def run(query: str) -> None:
         return
 
     print(f"\n[{intent.query_type.upper()} | complexity={intent.complexity_score} | cost={intent.execution_cost}]")
-    stream_response(query, intent)
+    _response_service.stream_response(query, intent)
 
 
 if __name__ == "__main__":

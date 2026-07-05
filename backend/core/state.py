@@ -1,13 +1,10 @@
-"""LangGraph shared state — typed, minimal, immutable-friendly."""
-from typing import Optional
-from typing_extensions import TypedDict
+"""state.py — backward-compatibility shim.
 
-from core.models.intent import IntentResult
+GraphState has moved to core/graph/state.py.
+This file re-exports it so any existing code using:
+    from core.state import GraphState
+continues to work without changes.
+"""
+from core.graph.state import GraphState  # noqa: F401
 
-
-class GraphState(TypedDict):
-    query: str
-    intent: Optional[IntentResult]
-    routed_to: Optional[str]
-    agent_response: Optional[str]
-    error: Optional[str]
+__all__ = ["GraphState"]

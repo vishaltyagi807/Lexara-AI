@@ -44,10 +44,10 @@ from pydantic import BaseModel, Field
 # ── Core layer imports (no business logic duplicated here) ────────────────────
 from core.graph import graph                               # compiled LangGraph
 from core.models.intent import IntentResult
-from core.models.model_registry import get_model_for
-from core.models.agent_prompts import get_prompt_for
+from core.registry.model_registry import get_model_for
+from core.prompts.response import get_prompt_for
 from core.config import cfg
-from core.state import GraphState
+from core.graph.state import GraphState
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
