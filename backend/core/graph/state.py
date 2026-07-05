@@ -1,5 +1,4 @@
-"""state.py — LangGraph shared state: typed, minimal, immutable-friendly."""
-from typing import Optional
+from typing import Optional, Any
 from typing_extensions import TypedDict
 
 from core.models.intent import IntentResult
@@ -13,3 +12,5 @@ class GraphState(TypedDict):
     agent_response: Optional[str]
     error: Optional[str]
     policy_decision: Optional[PolicyDecision]
+    chat_history: Optional[list[Any]]
+    summary: Optional[str]

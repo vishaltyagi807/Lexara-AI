@@ -15,10 +15,12 @@ log = logging.getLogger(__name__)
 REDIS_CHANNEL = "policy.updated"
 
 
-async def reload_active_policy() -> None:
+async def reload_active_policy(session_factory=None) -> None:
     """Fetch the active policy from database and reload the cache."""
+    if session_factory is None:
+        session_factory = AsyncSessionLocal
     try:
-        async with AsyncSessionLocal() as db:
+        async with session_factory() as db:
             active_policy = await PolicyRepository.get_active_policy(db)
             if active_policy:
                 PolicyCache().set_policy(
@@ -35,7 +37,7 @@ async def reload_active_policy() -> None:
         log.error("reload_active_policy: Failed to load policy from database: %s", exc)
 
 
-async def start_policy_subscriber() -> None:
+async def start_policy_subscriber(session_factory=None) -> None:
     """Redis Pub/Sub subscriber task.
 
     Listens to 'policy.updated' channel. When a notification is received,
@@ -58,7 +60,7 @@ async def start_policy_subscriber() -> None:
                         
                         # Process update
                         try:
-                            await reload_active_policy()
+                            await reload_active_policy(session_factory=session_factory)
                         except Exception as e:
                             log.error("start_policy_subscriber: Error reloading policy: %s", e)
                             
