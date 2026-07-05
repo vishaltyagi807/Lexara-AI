@@ -76,9 +76,11 @@ class ConversationService:
         self,
         db: AsyncSession,
         conversation_id: str | uuid.UUID,
-        user_content: str,
-        assistant_content: str,
+        user_id: str | uuid.UUID | None = None,
+        user_content: str = "",
+        assistant_content: str = "",
         metadata: dict[str, Any] | None = None,
+        title: str | None = None,
     ) -> None:
         """Save a message interaction atomically to DB and invalidate cache."""
         meta = metadata or {}
@@ -102,6 +104,11 @@ class ConversationService:
             "latency_ms": meta.get("latency_ms"),
             "finish_reason": meta.get("finish_reason"),
         }
+
+        # Ensure conversation exists and is linked to the user
+        conv = await self.repo.get_or_create_conversation(db, conversation_id, user_id)
+        if title:
+            await self.repo.rename_conversation(db, conversation_id, title)
 
         # Save to DB atomically
         await self.repo.save_messages_atomic(db, conversation_id, [user_payload, assistant_payload])

@@ -17,15 +17,15 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+
 
 interface ChatMarkdownProps {
   content: string;
   streaming?: boolean;
 }
 
-// ─── Streaming normalization ───────────────────────────────────────────────────
-// If a code block is unclosed (streaming), close it so react-markdown renders it
+
+
 
 function normalizeContent(content: string, streaming?: boolean): string {
   if (!streaming) return content;
@@ -34,7 +34,7 @@ function normalizeContent(content: string, streaming?: boolean): string {
   return content;
 }
 
-// ─── Custom Prism theme (matches Lexara dark palette) ─────────────────────────
+
 
 const lexaraTheme: Record<string, React.CSSProperties> = {
   'code[class*="language-"]': {
@@ -84,7 +84,7 @@ const lexaraTheme: Record<string, React.CSSProperties> = {
   important: { color: "#f38ba8", fontWeight: "bold" },
 };
 
-// ─── Language color map ───────────────────────────────────────────────────────
+
 
 const LANG_COLORS: Record<string, string> = {
   js: "#f7df1e",
@@ -112,19 +112,19 @@ const LANG_COLORS: Record<string, string> = {
   text: "#888888",
 };
 
-// ─── Callout definitions ──────────────────────────────────────────────────────
+
 
 const CALLOUTS = {
-  NOTE:      { Icon: Info,          label: "Note",      cls: "callout-note"      },
-  TIP:       { Icon: Lightbulb,     label: "Tip",       cls: "callout-tip"       },
-  WARNING:   { Icon: AlertTriangle, label: "Warning",   cls: "callout-warning"   },
-  CAUTION:   { Icon: AlertCircle,   label: "Caution",   cls: "callout-caution"   },
-  IMPORTANT: { Icon: Zap,           label: "Important", cls: "callout-important" },
+  NOTE: { Icon: Info, label: "Note", cls: "callout-note" },
+  TIP: { Icon: Lightbulb, label: "Tip", cls: "callout-tip" },
+  WARNING: { Icon: AlertTriangle, label: "Warning", cls: "callout-warning" },
+  CAUTION: { Icon: AlertCircle, label: "Caution", cls: "callout-caution" },
+  IMPORTANT: { Icon: Zap, label: "Important", cls: "callout-important" },
 } as const;
 
 type CalloutKey = keyof typeof CALLOUTS;
 
-// ─── Copy Button ──────────────────────────────────────────────────────────────
+
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -144,7 +144,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-// ─── Code Block ───────────────────────────────────────────────────────────────
+
 
 function CodeBlock({
   code,
@@ -155,9 +155,11 @@ function CodeBlock({
   lang: string;
   streaming?: boolean;
 }) {
-  /* detect chart types */
+ 
   if (["chart", "bar-chart", "line-chart", "bar", "line"].includes(lang)) {
-    return <MiniChart raw={code} type={lang.includes("line") ? "line" : "bar"} />;
+    return (
+      <MiniChart raw={code} type={lang.includes("line") ? "line" : "bar"} />
+    );
   }
 
   if (lang === "mermaid") {
@@ -166,7 +168,10 @@ function CodeBlock({
         <div className="lex-code-block group">
           <div className="lex-code-header">
             <div className="lex-code-lang-badge">
-              <span className="lex-code-lang-dot" style={{ background: "#00ADD8" }} />
+              <span
+                className="lex-code-lang-dot"
+                style={{ background: "#00ADD8" }}
+              />
               <span className="lex-code-lang-name">mermaid (streaming...)</span>
             </div>
           </div>
@@ -222,7 +227,7 @@ function CodeBlock({
   );
 }
 
-// ─── Mini Chart (bar + line) ──────────────────────────────────────────────────
+
 
 interface ChartRow {
   label: string;
@@ -243,7 +248,7 @@ function parseChartData(raw: string): {
       continue;
     }
     if (line.toLowerCase().startsWith("type:")) continue;
-    // skip header row if it contains non-numeric second col
+    
     const [rawLabel, rawVal] = line.split(",").map((s) => s.trim());
     const num = parseFloat(rawVal ?? "");
     if (rawLabel && !isNaN(num)) rows.push({ label: rawLabel, value: num });
@@ -282,20 +287,42 @@ function MiniChart({ raw, type }: { raw: string; type: "bar" | "line" }) {
           <defs>
             <linearGradient id="lexBarGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="oklch(0.78 0.17 210)" />
-              <stop offset="100%" stopColor="oklch(0.7 0.22 290)" stopOpacity="0.7" />
+              <stop
+                offset="100%"
+                stopColor="oklch(0.7 0.22 290)"
+                stopOpacity="0.7"
+              />
             </linearGradient>
             <linearGradient id="lexBarHover" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="oklch(0.88 0.14 200)" />
-              <stop offset="100%" stopColor="oklch(0.78 0.17 210)" stopOpacity="0.8" />
+              <stop
+                offset="100%"
+                stopColor="oklch(0.78 0.17 210)"
+                stopOpacity="0.8"
+              />
             </linearGradient>
           </defs>
           {/* grid */}
           {yTicks.map(({ y, label }) => (
             <g key={label}>
-              <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y}
-                stroke="oklch(1 0 0/0.07)" strokeWidth="1" strokeDasharray="3 3" />
-              <text x={PAD.l - 8} y={y + 3.5} textAnchor="end"
-                fontSize="9" fill="oklch(0.5 0 0)">{label}</text>
+              <line
+                x1={PAD.l}
+                y1={y}
+                x2={W - PAD.r}
+                y2={y}
+                stroke="oklch(1 0 0/0.07)"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+              />
+              <text
+                x={PAD.l - 8}
+                y={y + 3.5}
+                textAnchor="end"
+                fontSize="9"
+                fill="oklch(0.5 0 0)"
+              >
+                {label}
+              </text>
             </g>
           ))}
           {/* bars */}
@@ -306,33 +333,75 @@ function MiniChart({ raw, type }: { raw: string; type: "bar" | "line" }) {
             return (
               <g key={row.label}>
                 {/* bar bg */}
-                <rect x={x} y={PAD.t} width={bW} height={chartH}
-                  rx="4" fill="oklch(1 0 0/0.03)" />
+                <rect
+                  x={x}
+                  y={PAD.t}
+                  width={bW}
+                  height={chartH}
+                  rx="4"
+                  fill="oklch(1 0 0/0.03)"
+                />
                 {/* bar fill */}
-                <rect x={x} y={y} width={bW} height={bh}
-                  rx="4" fill="url(#lexBarGrad)" opacity="0.85">
-                  <title>{row.label}: {row.value}</title>
+                <rect
+                  x={x}
+                  y={y}
+                  width={bW}
+                  height={bh}
+                  rx="4"
+                  fill="url(#lexBarGrad)"
+                  opacity="0.85"
+                >
+                  <title>
+                    {row.label}: {row.value}
+                  </title>
                 </rect>
                 {/* value label */}
-                <text x={x + bW / 2} y={y - 5} textAnchor="middle"
-                  fontSize="9" fill="oklch(0.78 0.17 210)" fontWeight="600">{row.value}</text>
+                <text
+                  x={x + bW / 2}
+                  y={y - 5}
+                  textAnchor="middle"
+                  fontSize="9"
+                  fill="oklch(0.78 0.17 210)"
+                  fontWeight="600"
+                >
+                  {row.value}
+                </text>
                 {/* x label */}
-                <text x={x + bW / 2} y={H - PAD.b + 16} textAnchor="middle"
-                  fontSize="9" fill="oklch(0.6 0 0)">{row.label}</text>
+                <text
+                  x={x + bW / 2}
+                  y={H - PAD.b + 16}
+                  textAnchor="middle"
+                  fontSize="9"
+                  fill="oklch(0.6 0 0)"
+                >
+                  {row.label}
+                </text>
               </g>
             );
           })}
           {/* axis */}
-          <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={PAD.t + chartH}
-            stroke="oklch(1 0 0/0.12)" strokeWidth="1" />
-          <line x1={PAD.l} y1={PAD.t + chartH} x2={W - PAD.r} y2={PAD.t + chartH}
-            stroke="oklch(1 0 0/0.12)" strokeWidth="1" />
+          <line
+            x1={PAD.l}
+            y1={PAD.t}
+            x2={PAD.l}
+            y2={PAD.t + chartH}
+            stroke="oklch(1 0 0/0.12)"
+            strokeWidth="1"
+          />
+          <line
+            x1={PAD.l}
+            y1={PAD.t + chartH}
+            x2={W - PAD.r}
+            y2={PAD.t + chartH}
+            stroke="oklch(1 0 0/0.12)"
+            strokeWidth="1"
+          />
         </svg>
       </div>
     );
   }
 
-  /* line chart */
+ 
   const pts = rows.map((r, i) => ({
     x: PAD.l + (i / Math.max(rows.length - 1, 1)) * chartW,
     y: PAD.t + chartH * (1 - r.value / maxVal),
@@ -347,42 +416,182 @@ function MiniChart({ raw, type }: { raw: string; type: "bar" | "line" }) {
       <svg viewBox={`0 0 ${W} ${H}`} className="lex-chart-svg">
         <defs>
           <linearGradient id="lexLineArea" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="oklch(0.78 0.17 210)" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="oklch(0.78 0.17 210)" stopOpacity="0.02" />
+            <stop
+              offset="0%"
+              stopColor="oklch(0.78 0.17 210)"
+              stopOpacity="0.35"
+            />
+            <stop
+              offset="100%"
+              stopColor="oklch(0.78 0.17 210)"
+              stopOpacity="0.02"
+            />
           </linearGradient>
         </defs>
         {yTicks.map(({ y, label }) => (
           <g key={label}>
-            <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y}
-              stroke="oklch(1 0 0/0.07)" strokeWidth="1" strokeDasharray="3 3" />
-            <text x={PAD.l - 8} y={y + 3.5} textAnchor="end"
-              fontSize="9" fill="oklch(0.5 0 0)">{label}</text>
+            <line
+              x1={PAD.l}
+              y1={y}
+              x2={W - PAD.r}
+              y2={y}
+              stroke="oklch(1 0 0/0.07)"
+              strokeWidth="1"
+              strokeDasharray="3 3"
+            />
+            <text
+              x={PAD.l - 8}
+              y={y + 3.5}
+              textAnchor="end"
+              fontSize="9"
+              fill="oklch(0.5 0 0)"
+            >
+              {label}
+            </text>
           </g>
         ))}
         <polygon points={areaStr} fill="url(#lexLineArea)" />
-        <polyline points={polyStr} fill="none"
-          stroke="oklch(0.78 0.17 210)" strokeWidth="2.5"
-          strokeLinejoin="round" strokeLinecap="round" />
+        <polyline
+          points={polyStr}
+          fill="none"
+          stroke="oklch(0.78 0.17 210)"
+          strokeWidth="2.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
         {pts.map((p, i) => (
           <g key={i}>
-            <circle cx={p.x} cy={p.y} r="5"
-              fill="oklch(0.12 0 0)" stroke="oklch(0.78 0.17 210)" strokeWidth="2">
-              <title>{p.label}: {p.value}</title>
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r="5"
+              fill="oklch(0.12 0 0)"
+              stroke="oklch(0.78 0.17 210)"
+              strokeWidth="2"
+            >
+              <title>
+                {p.label}: {p.value}
+              </title>
             </circle>
-            <text x={p.x} y={H - PAD.b + 16} textAnchor="middle"
-              fontSize="9" fill="oklch(0.6 0 0)">{p.label}</text>
+            <text
+              x={p.x}
+              y={H - PAD.b + 16}
+              textAnchor="middle"
+              fontSize="9"
+              fill="oklch(0.6 0 0)"
+            >
+              {p.label}
+            </text>
           </g>
         ))}
-        <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={PAD.t + chartH}
-          stroke="oklch(1 0 0/0.12)" strokeWidth="1" />
-        <line x1={PAD.l} y1={PAD.t + chartH} x2={W - PAD.r} y2={PAD.t + chartH}
-          stroke="oklch(1 0 0/0.12)" strokeWidth="1" />
+        <line
+          x1={PAD.l}
+          y1={PAD.t}
+          x2={PAD.l}
+          y2={PAD.t + chartH}
+          stroke="oklch(1 0 0/0.12)"
+          strokeWidth="1"
+        />
+        <line
+          x1={PAD.l}
+          y1={PAD.t + chartH}
+          x2={W - PAD.r}
+          y2={PAD.t + chartH}
+          stroke="oklch(1 0 0/0.12)"
+          strokeWidth="1"
+        />
       </svg>
     </div>
   );
 }
 
-// ─── Mermaid Diagram Renderer ─────────────────────────────────────────────────
+/**
+ * Sanitize a Mermaid diagram string so that node labels containing special
+ * characters (parentheses, commas, slashes, +, etc.) are properly quoted.
+ *
+ * Mermaid's flowchart parser rejects unquoted labels like:
+ *   A[Label (with parens)]
+ *   B[Forward + Backward Pass]
+ *
+ * We fix them by wrapping the label text in double-quotes:
+ *   A["Label (with parens)"]
+ *   B["Forward + Backward Pass"]
+ *
+ * We use a precise alternation to match all 11 Mermaid node shapes, targeting
+ * only labels that follow node identifiers (e.g. node_id[label]).
+ */
+function sanitizeMermaid(chart: string): string {
+  
+  const needsQuote = /[(){}|+,;/<>]/;
+
+  
+  const nodeRegex =
+    /\b([a-zA-Z0-9_-]+)\s*(?:\[\[([^\]\n]+)\]\]|\[\(([^)\n]+)\)\]|\(\[([^\]\n]+)\]\)|\[\/([^/\\\n]+)\/\]|\[\\([^\\]\n]+)\\\]|\(\(([^)\n]+)\)\)|\{\{([^}\n]+)\}\}|\[([^\]\n]+)\]|\(([^)\n]+)\)|\{([^}\n]+)\}|>([^\]\n]+)\])/g;
+
+  return chart.replace(
+    nodeRegex,
+    (match, id, g2, g3, g4, g5, g6, g7, g8, g9, g10, g11, g12) => {
+      
+      const label =
+        g2 || g3 || g4 || g5 || g6 || g7 || g8 || g9 || g10 || g11 || g12;
+      if (!label) return match;
+
+      const trimmed = label.trim();
+      
+      if (trimmed.startsWith('"') && trimmed.endsWith('"')) return match;
+
+      if (needsQuote.test(trimmed)) {
+        
+        const escaped = trimmed.replace(/"/g, "'");
+
+        
+        let openBrackets = "";
+        let closeBrackets = "";
+
+        if (g2) {
+          openBrackets = "[[";
+          closeBrackets = "]]";
+        } else if (g3) {
+          openBrackets = "[(";
+          closeBrackets = ")]";
+        } else if (g4) {
+          openBrackets = "([";
+          closeBrackets = "])";
+        } else if (g5) {
+          openBrackets = "[/";
+          closeBrackets = "/]";
+        } else if (g6) {
+          openBrackets = "[\\";
+          closeBrackets = "\\]";
+        } else if (g7) {
+          openBrackets = "((";
+          closeBrackets = "))";
+        } else if (g8) {
+          openBrackets = "{{";
+          closeBrackets = "}}";
+        } else if (g9) {
+          openBrackets = "[";
+          closeBrackets = "]";
+        } else if (g10) {
+          openBrackets = "(";
+          closeBrackets = ")";
+        } else if (g11) {
+          openBrackets = "{";
+          closeBrackets = "}";
+        } else if (g12) {
+          openBrackets = ">";
+          closeBrackets = "]";
+        }
+
+        return `${id}${openBrackets}"${escaped}"${closeBrackets}`;
+      }
+
+      return match;
+    },
+  );
+}
+
+
 
 let mermaidInitialized = false;
 
@@ -394,6 +603,7 @@ function MermaidBlock({ chart }: { chart: string }) {
     let active = true;
 
     async function renderChart() {
+      const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
       try {
         const mermaid = (await import("mermaid")).default;
         if (!mermaidInitialized) {
@@ -423,15 +633,28 @@ function MermaidBlock({ chart }: { chart: string }) {
           mermaidInitialized = true;
         }
 
-        const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
-        const { svg: renderedSvg } = await mermaid.render(id, chart);
-        
+        const { svg: renderedSvg } = await mermaid.render(
+          id,
+          sanitizeMermaid(chart),
+        );
+
         if (active) {
           setSvg(renderedSvg);
           setError(false);
         }
       } catch (err) {
         console.error("Mermaid render error:", err);
+        try {
+          const el1 = document.getElementById(id);
+          if (el1) el1.remove();
+          const el2 = document.getElementById(`d${id}`);
+          if (el2) el2.remove();
+          const uniquePart = id.split("-")[1];
+          if (uniquePart) {
+            const matches = document.querySelectorAll(`[id*="${uniquePart}"]`);
+            matches.forEach((el) => el.remove());
+          }
+        } catch (e) {}
         if (active) {
           setError(true);
         }
@@ -450,7 +673,10 @@ function MermaidBlock({ chart }: { chart: string }) {
       <div className="lex-code-block group">
         <div className="lex-code-header">
           <div className="lex-code-lang-badge">
-            <span className="lex-code-lang-dot" style={{ background: "#ef4444" }} />
+            <span
+              className="lex-code-lang-dot"
+              style={{ background: "#ef4444" }}
+            />
             <span className="lex-code-lang-name">mermaid (render failed)</span>
           </div>
         </div>
@@ -472,14 +698,14 @@ function MermaidBlock({ chart }: { chart: string }) {
   }
 
   return (
-    <div 
+    <div
       className="lex-mermaid-block"
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
 }
 
-// ─── Callout Card ─────────────────────────────────────────────────────────────
+
 
 function CalloutCard({
   type,
@@ -500,37 +726,43 @@ function CalloutCard({
   );
 }
 
-// ─── Blockquote / Callout detection ──────────────────────────────────────────
+
 
 function BlockquoteWrapper({
   children,
   node,
 }: {
   children: React.ReactNode;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  
   node?: any;
 }) {
-  // Inspect hast AST for [!TYPE] pattern in first paragraph
+  
   try {
-    const firstText: string =
-      node?.children?.[0]?.children?.[0]?.value ?? "";
-    const match = firstText.match(/^\[!(NOTE|TIP|WARNING|CAUTION|IMPORTANT)\]/i);
+    const firstText: string = node?.children?.[0]?.children?.[0]?.value ?? "";
+    const match = firstText.match(
+      /^\[!(NOTE|TIP|WARNING|CAUTION|IMPORTANT)\]/i,
+    );
     if (match) {
       const key = match[1].toUpperCase() as CalloutKey;
       const remaining = firstText.slice(match[0].length).trim();
       const childArr = React.Children.toArray(children);
       const body = remaining
-        ? [<p key="_first" className="lex-md-p">{remaining}</p>, ...childArr.slice(1)]
+        ? [
+            <p key="_first" className="lex-md-p">
+              {remaining}
+            </p>,
+            ...childArr.slice(1),
+          ]
         : childArr.slice(1);
       return <CalloutCard type={key}>{body}</CalloutCard>;
     }
   } catch {
-    /* ignore */
+   
   }
   return <blockquote className="lex-blockquote">{children}</blockquote>;
 }
 
-// ─── Table ────────────────────────────────────────────────────────────────────
+
 
 function TableWrapper({ children }: { children: React.ReactNode }) {
   return (
@@ -540,97 +772,150 @@ function TableWrapper({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ─── Task-list checkbox ───────────────────────────────────────────────────────
+
 
 function TaskCheckbox({ checked }: { checked?: boolean }) {
   return (
-    <span className={`lex-checkbox ${checked ? "lex-checkbox-on" : "lex-checkbox-off"}`}>
+    <span
+      className={`lex-checkbox ${checked ? "lex-checkbox-on" : "lex-checkbox-off"}`}
+    >
       {checked && <Check size={9} strokeWidth={3} />}
     </span>
   );
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+
 
 export function ChatMarkdown({ content, streaming }: ChatMarkdownProps) {
   const normalized = normalizeContent(content, streaming);
 
   const components: Components = {
-    // paragraphs
+    
     p({ children }) {
       return <p className="lex-md-p">{children}</p>;
     },
 
-    // headings
-    h1({ children }) { return <h1 className="lex-h lex-h1">{children}</h1>; },
-    h2({ children }) { return <h2 className="lex-h lex-h2">{children}</h2>; },
-    h3({ children }) { return <h3 className="lex-h lex-h3">{children}</h3>; },
-    h4({ children }) { return <h4 className="lex-h lex-h4">{children}</h4>; },
-    h5({ children }) { return <h5 className="lex-h lex-h5">{children}</h5>; },
-    h6({ children }) { return <h6 className="lex-h lex-h6">{children}</h6>; },
+    
+    h1({ children }) {
+      return <h1 className="lex-h lex-h1">{children}</h1>;
+    },
+    h2({ children }) {
+      return <h2 className="lex-h lex-h2">{children}</h2>;
+    },
+    h3({ children }) {
+      return <h3 className="lex-h lex-h3">{children}</h3>;
+    },
+    h4({ children }) {
+      return <h4 className="lex-h lex-h4">{children}</h4>;
+    },
+    h5({ children }) {
+      return <h5 className="lex-h lex-h5">{children}</h5>;
+    },
+    h6({ children }) {
+      return <h6 className="lex-h lex-h6">{children}</h6>;
+    },
 
-    // code: block vs inline
+    
     pre({ children }) {
-      // react-markdown nests <code> inside <pre> for fenced blocks.
-      // We let CodeBlock render its own container; pre just passes through.
+      
+      
       return <>{children}</>;
     },
     code({ className, children }) {
       const lang = className?.replace("language-", "") ?? "";
       const codeStr = String(children).replace(/\n$/, "");
-      // Block code: has language class OR contains newlines (no-lang fence)
+      
       if (lang || codeStr.includes("\n")) {
-        return <CodeBlock code={codeStr} lang={lang || "text"} streaming={streaming} />;
+        return (
+          <CodeBlock
+            code={codeStr}
+            lang={lang || "text"}
+            streaming={streaming}
+          />
+        );
       }
-      // Inline code
+      
       return <code className="lex-code-inline">{children}</code>;
     },
 
-    // table
-    table({ children }) { return <TableWrapper>{children}</TableWrapper>; },
-    thead({ children }) { return <thead className="lex-thead">{children}</thead>; },
-    tbody({ children }) { return <tbody>{children}</tbody>; },
-    tr({ children }) { return <tr className="lex-tr">{children}</tr>; },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    th({ children, style }: any) {
-      return <th className="lex-th" style={style}>{children}</th>;
+    
+    table({ children }) {
+      return <TableWrapper>{children}</TableWrapper>;
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    thead({ children }) {
+      return <thead className="lex-thead">{children}</thead>;
+    },
+    tbody({ children }) {
+      return <tbody>{children}</tbody>;
+    },
+    tr({ children }) {
+      return <tr className="lex-tr">{children}</tr>;
+    },
+    
+    th({ children, style }: any) {
+      return (
+        <th className="lex-th" style={style}>
+          {children}
+        </th>
+      );
+    },
+    
     td({ children, style }: any) {
-      return <td className="lex-td" style={style}>{children}</td>;
+      return (
+        <td className="lex-td" style={style}>
+          {children}
+        </td>
+      );
     },
 
-    // blockquote / callout
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
+    
     blockquote({ children, node }: any) {
       return <BlockquoteWrapper node={node}>{children}</BlockquoteWrapper>;
     },
 
-    // lists
-    ul({ children }) { return <ul className="lex-ul">{children}</ul>; },
-    ol({ children }) { return <ol className="lex-ol">{children}</ol>; },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
+    ul({ children }) {
+      return <ul className="lex-ul">{children}</ul>;
+    },
+    ol({ children }) {
+      return <ol className="lex-ol">{children}</ol>;
+    },
+    
     li({ children, className }: any) {
       const isTask = String(className ?? "").includes("task-list-item");
-      return <li className={`lex-li ${isTask ? "lex-task-li" : ""}`}>{children}</li>;
+      return (
+        <li className={`lex-li ${isTask ? "lex-task-li" : ""}`}>{children}</li>
+      );
     },
 
-    // inline
-    strong({ children }) { return <strong className="lex-strong">{children}</strong>; },
-    em({ children }) { return <em className="lex-em">{children}</em>; },
-    del({ children }) { return <del className="lex-del">{children}</del>; },
+    
+    strong({ children }) {
+      return <strong className="lex-strong">{children}</strong>;
+    },
+    em({ children }) {
+      return <em className="lex-em">{children}</em>;
+    },
+    del({ children }) {
+      return <del className="lex-del">{children}</del>;
+    },
 
-    // links
+    
     a({ href, children }) {
       return (
-        <a href={href} target="_blank" rel="noopener noreferrer" className="lex-link">
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="lex-link"
+        >
           {children}
           <ExternalLink size={10} className="lex-link-icon" />
         </a>
       );
     },
 
-    // images
+    
     img({ src, alt }) {
       return (
         <span className="lex-img-wrap">
@@ -641,11 +926,13 @@ export function ChatMarkdown({ content, streaming }: ChatMarkdownProps) {
       );
     },
 
-    // hr
-    hr() { return <hr className="lex-hr" />; },
+    
+    hr() {
+      return <hr className="lex-hr" />;
+    },
 
-    // task-list checkboxes
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    
+    
     input({ type, checked }: any) {
       if (type === "checkbox") return <TaskCheckbox checked={checked} />;
       return null;

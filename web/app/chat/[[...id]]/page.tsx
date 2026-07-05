@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus,
   MessageSquare,
-  FolderKanban,
   Cpu,
   BarChart3,
   Settings,
@@ -14,7 +13,6 @@ import {
   Paperclip,
   Mic,
   Image as ImageIcon,
-  Zap,
   Activity,
   Coins,
   Gauge,
@@ -27,46 +25,14 @@ import {
   Check,
   Loader2,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, use, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import LightRays from "@/components/backgrounds/LightRays";
 import { ChatMarkdown } from "@/components/chat/ChatMarkdown";
 import { useAuth } from "@/lib/auth-context";
-
-
-
-
-
-
-type Msg = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  model?: string;
-  queryType?: string;
-  routedTo?: string;
-  streaming?: boolean;
-};
-
-type Session = {
-  id: string;
-  title: string;
-  createdAt: number;
-  messages: Msg[];
-};
-
-type IntentMeta = {
-  query_type: string;
-  complexity_score: number;
-  execution_cost: string;
-  routed_to: string;
-  model: string;
-};
-
-// ─── Constants ────────────────────────────────────────────────────────────────
+import { useChatContext, type Msg, type Session } from "../chat-context";
 
 const API_BASE = "http://localhost:8000/api/v1";
-const STORAGE_KEY = "lexara_sessions";
 
 const providersInfo = [
   { name: "OpenAI", conf: 91, cost: 88, lat: 76, cap: 95 },
@@ -84,93 +50,149 @@ const routingSteps = [
   "Streaming response",
 ];
 
-// ─── Session helpers ──────────────────────────────────────────────────────────
-
-function loadSessions(): Session[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveSessions(sessions: Session[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-  } catch {}
-}
-
-function createSession(): Session {
-  return {
-    id: crypto.randomUUID(),
-    title: "New Chat",
-    createdAt: Date.now(),
-    messages: [],
-  };
-}
+type IntentMeta = {
+  query_type: string;
+  complexity_score: number;
+  execution_cost: string;
+  routed_to: string;
+  model: string;
+};
 
 function deriveTitle(text: string): string {
   return text.trim().slice(0, 48) + (text.trim().length > 48 ? "…" : "");
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+interface PageProps {
+  params: Promise<{ id?: string[] }>;
+}
 
-export default function ChatApp() {
+export default function ChatPage({ params }: PageProps) {
+  const unwrapped = use(params);
+
+  const activeId =
+    unwrapped.id && unwrapped.id.length > 0 ? unwrapped.id[0] : "new";
+
+  return (
+    <Suspense
+      fallback={
+        <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background">
+          <div className="relative z-10 flex flex-col items-center gap-4 text-center">
+            <Loader2 className="h-12 w-12 animate-spin text-cyan" />
+            <h2 className="font-display text-lg font-semibold tracking-wide text-foreground animate-pulse">
+              Loading your workspace
+            </h2>
+          </div>
+        </main>
+      }
+    >
+      <ChatApp activeId={activeId} />
+    </Suspense>
+  );
+}
+
+function ChatApp({ activeId }: { activeId: string }) {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
 
-  // Redirect if not logged in
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push("/login?redirect=/chat");
-    }
-  }, [user, loading, router]);
+  const { sessions, setSessions, fetchHistory } = useChatContext();
 
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [routingStep, setRoutingStep] = useState(0);
   const [intent, setIntent] = useState<IntentMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Load from localStorage on mount
   useEffect(() => {
-    const stored = loadSessions();
-    if (stored.length > 0) {
-      setSessions(stored);
-      setActiveId(stored[0].id);
-    } else {
-      const initial = createSession();
-      setSessions([initial]);
-      setActiveId(initial.id);
+    if (!loading && !user) router.push("/login?redirect=/chat");
+  }, [user, loading, router]);
+
+  useEffect(() => {
+    if (activeId === "new" || !user?.id) return;
+
+    const current = sessions.find((s) => s.id === activeId);
+    if (current && current.messages.length > 0) return;
+
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/chat/${activeId}`, {
+          credentials: "include",
+        });
+        if (res.ok) {
+          const details = await res.json();
+          const loadedMsgs: Msg[] = details.messages.map((m: any) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            model: m.model,
+            queryType: m.query_type,
+            routedTo: m.routed_to,
+          }));
+          setSessions((prev) => {
+            const exists = prev.some((s) => s.id === activeId);
+            if (exists) {
+              return prev.map((s) =>
+                s.id === activeId
+                  ? {
+                      ...s,
+                      title: details.title || s.title,
+                      messages: loadedMsgs,
+                    }
+                  : s,
+              );
+            }
+            return [
+              {
+                id: activeId,
+                title: details.title || "Untitled Chat",
+                createdAt: details.created_at
+                  ? new Date(details.created_at).getTime()
+                  : Date.now(),
+                messages: loadedMsgs,
+              },
+              ...prev,
+            ];
+          });
+        }
+      } catch (err) {
+        console.error("Failed to fetch conversation details:", err);
+      }
+    };
+    load();
+  }, [activeId, user?.id]);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+
+    const threshold = 150;
+    const isNearBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight <=
+      threshold;
+
+    if (isNearBottom || !streaming) {
+      endRef.current?.scrollIntoView({
+        behavior: streaming ? "auto" : "smooth",
+      });
     }
-  }, []);
-
-  // Persist sessions whenever they change
-  useEffect(() => {
-    if (sessions.length > 0) saveSessions(sessions);
-  }, [sessions]);
-
-  // Auto-scroll on new message
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [sessions, streaming]);
 
-  const activeSession = sessions.find((s) => s.id === activeId) ?? null;
-
-  // ── Session management ──────────────────────────────────────────────────────
+  const activeSession: Session | null =
+    activeId === "new"
+      ? { id: "new", title: "New Chat", createdAt: Date.now(), messages: [] }
+      : (sessions.find((s) => s.id === activeId) ?? null);
 
   const newChat = useCallback(() => {
-    const s = createSession();
-    setSessions((prev) => [s, ...prev]);
-    setActiveId(s.id);
+    if (streaming) {
+      abortRef.current?.abort();
+      setStreaming(false);
+    }
     setIntent(null);
     setError(null);
-  }, []);
+    router.push("/chat");
+  }, [router, streaming]);
 
   const openSession = useCallback(
     (id: string) => {
@@ -178,48 +200,46 @@ export default function ChatApp() {
         abortRef.current?.abort();
         setStreaming(false);
       }
-      setActiveId(id);
       setIntent(null);
       setError(null);
+      router.push(`/chat/${id}`);
     },
-    [streaming]
+    [streaming, router],
   );
 
   const deleteSession = useCallback(
-    (id: string, e: React.MouseEvent) => {
+    async (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      setSessions((prev) => {
-        const next = prev.filter((s) => s.id !== id);
-        if (id === activeId) {
-          if (next.length > 0) setActiveId(next[0].id);
-          else {
-            const fresh = createSession();
-            setTimeout(() => {
-              setSessions([fresh]);
-              setActiveId(fresh.id);
-            }, 0);
-            return [];
+      try {
+        const res = await fetch(`${API_BASE}/chat/${id}`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+        if (res.ok) {
+          const next = sessions.filter((s) => s.id !== id);
+          setSessions(next);
+          if (id === activeId) {
+            router.push(next.length > 0 ? `/chat/${next[0].id}` : "/chat");
           }
         }
-        return next;
-      });
+      } catch (err) {
+        console.error("Failed to delete session:", err);
+      }
     },
-    [activeId]
+    [activeId, router, sessions, setSessions],
   );
-
-  // ── Messaging ───────────────────────────────────────────────────────────────
 
   const updateSession = useCallback(
     (sessionId: string, updater: (s: Session) => Session) => {
       setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? updater(s) : s))
+        prev.map((s) => (s.id === sessionId ? updater(s) : s)),
       );
     },
-    []
+    [setSessions],
   );
 
   const send = useCallback(async () => {
-    if (!input.trim() || streaming || !activeId) return;
+    if (!input.trim() || streaming || !user) return;
 
     const message = input.trim();
     setInput("");
@@ -228,37 +248,48 @@ export default function ChatApp() {
     setRoutingStep(0);
     setIntent(null);
 
+    const isNew = activeId === "new";
+    const convId = isNew ? crypto.randomUUID() : activeId;
+
     const userMsg: Msg = {
       id: crypto.randomUUID(),
       role: "user",
       content: message,
     };
-
-    // Add user message; derive title from first message
-    updateSession(activeId, (s) => ({
-      ...s,
-      title: s.messages.length === 0 ? deriveTitle(message) : s.title,
-      messages: [...s.messages, userMsg],
-    }));
-
-    // Create placeholder assistant message for streaming
     const assistantMsgId = crypto.randomUUID();
-    const placeholderMsg: Msg = {
+    const placeholder: Msg = {
       id: assistantMsgId,
       role: "assistant",
       content: "",
       streaming: true,
     };
-    updateSession(activeId, (s) => ({
-      ...s,
-      messages: [...s.messages, placeholderMsg],
-    }));
 
-    // Animate routing steps
+    setSessions((prev) => {
+      const existing = prev.find((s) => s.id === convId);
+      if (existing) {
+        return prev.map((s) =>
+          s.id === convId
+            ? {
+                ...s,
+                title: s.messages.length === 0 ? deriveTitle(message) : s.title,
+                messages: [...s.messages, userMsg, placeholder],
+              }
+            : s,
+        );
+      }
+      const fresh: Session = {
+        id: convId,
+        title: deriveTitle(message),
+        createdAt: Date.now(),
+        messages: [userMsg, placeholder],
+      };
+      return [fresh, ...prev];
+    });
+
+    if (isNew) router.replace(`/chat/${convId}`);
+
     const iv = setInterval(() => {
-      setRoutingStep((s) =>
-        s + 1 < routingSteps.length ? s + 1 : s
-      );
+      setRoutingStep((s) => (s + 1 < routingSteps.length ? s + 1 : s));
     }, 700);
 
     const controller = new AbortController();
@@ -269,16 +300,11 @@ export default function ChatApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          message,
-          conversation_id: activeId,
-        }),
         signal: controller.signal,
+        body: JSON.stringify({ message, conversation_id: convId }),
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
       clearInterval(iv);
       setRoutingStep(routingSteps.length - 1);
@@ -298,36 +324,28 @@ export default function ChatApp() {
         for (const part of parts) {
           if (!part.trim()) continue;
 
-          // ── Robust SSE frame parser ─────────────────────────────────────
-          // The Python backend may embed raw \n inside data fields
-          // (non-standard but common). We collect continuation lines and
-          // join them so newlines inside tokens are preserved.
           const sseLines = part.split("\n");
           let event = "";
           const dataLines: string[] = [];
           let inData = false;
 
-          for (const sseLine of sseLines) {
-            if (sseLine.startsWith("event:")) {
-              event = sseLine.slice(6).trim();
+          for (const line of sseLines) {
+            if (line.startsWith("event:")) {
+              event = line.slice(6).trim();
               inData = false;
-            } else if (sseLine.startsWith("data:")) {
-              dataLines.push(sseLine.slice(5));
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5));
               inData = true;
-            } else if (inData) {
-              // Continuation of a data value (embedded \n from backend)
-              dataLines.push(sseLine);
-            }
+            } else if (inData) dataLines.push(line);
           }
 
-          // Join multiple data: lines per SSE spec (\n separator)
           const rawData = dataLines.join("\n");
 
           if (event === "metadata") {
             try {
               const parsed: IntentMeta = JSON.parse(rawData);
               setIntent(parsed);
-              updateSession(activeId, (s) => ({
+              updateSession(convId, (s) => ({
                 ...s,
                 messages: s.messages.map((m) =>
                   m.id === assistantMsgId
@@ -337,23 +355,34 @@ export default function ChatApp() {
                         queryType: parsed.query_type,
                         routedTo: parsed.routed_to,
                       }
-                    : m
+                    : m,
                 ),
               }));
             } catch {}
           } else if (event === "token") {
-            // Tokens are JSON-encoded on the backend to safely carry \n chars.
-            // Fall back to rawData if not valid JSON (legacy / plain text).
             let token = rawData;
-            try { token = JSON.parse(rawData); } catch { /* raw string */ }
+            try {
+              token = JSON.parse(rawData);
+            } catch {}
             if (token) {
-              updateSession(activeId, (s) => ({
+              updateSession(convId, (s) => ({
                 ...s,
                 messages: s.messages.map((m) =>
                   m.id === assistantMsgId
                     ? { ...m, content: m.content + token }
-                    : m
+                    : m,
                 ),
+              }));
+            }
+          } else if (event === "title") {
+            let generatedTitle = rawData;
+            try {
+              generatedTitle = JSON.parse(rawData);
+            } catch {}
+            if (generatedTitle) {
+              updateSession(convId, (s) => ({
+                ...s,
+                title: generatedTitle,
               }));
             }
           } else if (event === "error") {
@@ -367,22 +396,31 @@ export default function ChatApp() {
         setError(
           err.message.includes("Failed to fetch")
             ? "Cannot connect to backend. Is it running on :8000?"
-            : err.message
+            : err.message,
         );
       }
     } finally {
       clearInterval(iv);
-      // Mark assistant message as done streaming
-      updateSession(activeId, (s) => ({
+      updateSession(convId, (s) => ({
         ...s,
         messages: s.messages.map((m) =>
-          m.id === assistantMsgId ? { ...m, streaming: false } : m
+          m.id === assistantMsgId ? { ...m, streaming: false } : m,
         ),
       }));
       setStreaming(false);
       setRoutingStep(0);
+      fetchHistory();
     }
-  }, [input, streaming, activeId, updateSession]);
+  }, [
+    input,
+    streaming,
+    activeId,
+    user,
+    updateSession,
+    fetchHistory,
+    router,
+    setSessions,
+  ]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -391,19 +429,17 @@ export default function ChatApp() {
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
-
   if (loading || !user) {
     return (
       <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,oklch(0.05_0.02_260)_95%)]" />
-          <div className="absolute -top-40 left-1/2 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-br from-cyan/20 via-violet/10 to-transparent blur-3xl" />
+          <div className="absolute -top-40 left-1/2 h-125 w-125 -translate-x-1/2 rounded-full bg-gradient-to-br from-cyan/20 via-violet/10 to-transparent blur-3xl" />
         </div>
         <div className="relative z-10 flex flex-col items-center gap-4 text-center">
           <div className="relative flex h-16 w-16 items-center justify-center">
             <Loader2 className="absolute h-12 w-12 animate-spin text-cyan" />
-            <div className="h-6 w-6 rounded-full bg-gradient-to-br from-cyan to-violet opacity-80 blur-[2px]" />
+            <div className="h-6 w-6 rounded-full bg-linear-to-br from-cyan to-violet opacity-80 blur-[2px]" />
           </div>
           <h2 className="font-display text-lg font-semibold tracking-wide text-foreground animate-pulse">
             Loading your workspace
@@ -421,17 +457,19 @@ export default function ChatApp() {
 
       {/* ── SIDEBAR ── */}
       <aside className="relative z-10 hidden w-64 flex-col border-r border-border/60 bg-background/60 backdrop-blur-2xl md:flex">
-        {/* Logo */}
         <div className="flex items-center justify-between px-4 py-4 border-b border-border/40">
           <Link href="/" className="flex items-center gap-2">
-            <img src="/fav.png" alt="LexaraAI" className="h-8 w-8 object-contain rounded-lg" />
+            <img
+              src="/fav.png"
+              alt="LexaraAI"
+              className="h-8 w-8 object-contain rounded-lg"
+            />
             <span className="font-display text-sm font-semibold">
               Lexara<span className="text-gradient">AI</span>
             </span>
           </Link>
         </div>
 
-        {/* New Chat button */}
         <div className="px-3 pt-3">
           <button
             id="new-chat-btn"
@@ -443,11 +481,10 @@ export default function ChatApp() {
           </button>
         </div>
 
-        {/* Sessions list */}
         <div className="flex-1 overflow-y-auto scrollbar-thin px-3 pb-3 pt-4">
           {sessions.length === 0 ? (
             <div className="text-center text-xs text-muted-foreground pt-8">
-              No sessions yet
+              No conversations yet
             </div>
           ) : (
             <>
@@ -485,7 +522,6 @@ export default function ChatApp() {
           )}
         </div>
 
-        {/* Nav items */}
         <div className="border-t border-border/40 px-3 py-3 space-y-0.5">
           {[
             { label: "Models", icon: Cpu },
@@ -502,11 +538,14 @@ export default function ChatApp() {
           ))}
         </div>
 
-        {/* User */}
         <div className="border-t border-border/60 p-3 space-y-2">
           <div className="glass flex items-center gap-2 rounded-xl px-3 py-2">
             {user?.avatar_url ? (
-              <img src={user.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+              <img
+                src={user.avatar_url}
+                alt=""
+                className="h-7 w-7 rounded-full object-cover"
+              />
             ) : (
               <div className="grid h-7 w-7 place-items-center rounded-full bg-linear-to-br from-cyan to-violet text-background">
                 <User className="h-3.5 w-3.5" />
@@ -532,7 +571,6 @@ export default function ChatApp() {
 
       {/* ── MAIN CHAT ── */}
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
-        {/* Header */}
         <header className="flex items-center justify-between border-b border-border/60 bg-background/40 px-6 py-3 backdrop-blur-xl">
           <div>
             <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
@@ -543,7 +581,7 @@ export default function ChatApp() {
             </div>
           </div>
           <div className="flex items-center gap-2 text-xs">
-            {intent && (
+            {intent ? (
               <>
                 <Pill
                   icon={Cpu}
@@ -561,8 +599,7 @@ export default function ChatApp() {
                   value={intent.execution_cost ?? "—"}
                 />
               </>
-            )}
-            {!intent && (
+            ) : (
               <>
                 <Pill icon={Cpu} label="Auto-route" value="Ready" />
                 <Pill icon={Sparkles} label="Mode" value="Balanced" />
@@ -571,10 +608,11 @@ export default function ChatApp() {
           </div>
         </header>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto scrollbar-thin px-6 py-8">
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto scrollbar-thin px-6 py-8"
+        >
           <div className="mx-auto flex max-w-3xl flex-col gap-6">
-            {/* Empty state */}
             {activeSession?.messages.length === 0 && !streaming && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -588,8 +626,8 @@ export default function ChatApp() {
                   How can LexaraAI help?
                 </h2>
                 <p className="text-muted-foreground text-sm max-w-sm">
-                  Ask anything. Your request is automatically routed to the
-                  best model across 8+ providers in real time.
+                  Ask anything. Your request is automatically routed to the best
+                  model across 8+ providers in real time.
                 </p>
                 <div className="mt-8 grid grid-cols-2 gap-3 text-left max-w-lg">
                   {[
@@ -597,25 +635,23 @@ export default function ChatApp() {
                     "Write a Python FastAPI auth middleware",
                     "Compare GPT-4o vs Claude 3.5 for coding tasks",
                     "Optimize my LLM prompt for cost efficiency",
-                  ].map((suggestion) => (
+                  ].map((s) => (
                     <button
-                      key={suggestion}
-                      onClick={() => setInput(suggestion)}
+                      key={s}
+                      onClick={() => setInput(s)}
                       className="glass rounded-xl p-3 text-xs text-left text-foreground/80 hover:text-foreground hover:bg-white/10 transition"
                     >
-                      {suggestion}
+                      {s}
                     </button>
                   ))}
                 </div>
               </motion.div>
             )}
 
-            {/* Messages */}
             {activeSession?.messages.map((m) => (
               <MessageBubble key={m.id} m={m} />
             ))}
 
-            {/* Routing indicator */}
             <AnimatePresence>
               {streaming &&
                 (activeSession?.messages.at(-1)?.content ?? "") === "" && (
@@ -640,18 +676,10 @@ export default function ChatApp() {
                         {routingSteps.map((s, i) => (
                           <div
                             key={s}
-                            className={`flex items-center gap-2 text-xs transition ${
-                              i <= routingStep
-                                ? "text-foreground"
-                                : "text-muted-foreground/50"
-                            }`}
+                            className={`flex items-center gap-2 text-xs transition ${i <= routingStep ? "text-foreground" : "text-muted-foreground/50"}`}
                           >
                             <ChevronRight
-                              className={`h-3 w-3 ${
-                                i === routingStep
-                                  ? "animate-pulse text-cyan"
-                                  : ""
-                              }`}
+                              className={`h-3 w-3 ${i === routingStep ? "animate-pulse text-cyan" : ""}`}
                             />
                             {s}
                             {i === routingStep ? "..." : ""}
@@ -663,7 +691,6 @@ export default function ChatApp() {
                 )}
             </AnimatePresence>
 
-            {/* Error banner */}
             <AnimatePresence>
               {error && (
                 <motion.div
@@ -687,7 +714,6 @@ export default function ChatApp() {
           </div>
         </div>
 
-        {/* Input */}
         <div className="border-t border-border/60 bg-background/40 px-6 py-4 backdrop-blur-xl">
           <div className="mx-auto max-w-3xl">
             <div className="glass-strong relative flex items-end gap-2 rounded-2xl p-2 ring-1 ring-white/5 focus-within:ring-cyan/40 transition">
@@ -750,7 +776,6 @@ export default function ChatApp() {
           </div>
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto scrollbar-thin p-4">
-          {/* Intent info from real API */}
           <Panel title="Routing Decision" icon={Cpu}>
             {intent ? (
               <div className="space-y-2">
@@ -767,11 +792,7 @@ export default function ChatApp() {
                 {providersInfo.map((p) => (
                   <div
                     key={p.name}
-                    className={`rounded-xl p-2.5 ${
-                      p.selected
-                        ? "bg-linear-to-r from-cyan/15 to-violet/10 ring-1 ring-cyan/30"
-                        : "bg-white/3"
-                    }`}
+                    className={`rounded-xl p-2.5 ${p.selected ? "bg-linear-to-r from-cyan/15 to-violet/10 ring-1 ring-cyan/30" : "bg-white/3"}`}
                   >
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium">{p.name}</span>
@@ -782,18 +803,15 @@ export default function ChatApp() {
                       )}
                     </div>
                     <div className="mt-2 grid grid-cols-4 gap-1.5 text-[9px]">
-                      {[
-                        ["Conf", p.conf],
-                        ["Cost", p.cost],
-                        ["Lat", p.lat],
-                        ["Cap", p.cap],
-                      ].map(([k, v]) => (
-                        <div key={k as string}>
+                      {(["Conf", "Cost", "Lat", "Cap"] as const).map((k, i) => (
+                        <div key={k}>
                           <div className="text-muted-foreground">{k}</div>
                           <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-white/10">
                             <div
                               className="h-full bg-linear-to-r from-cyan to-violet"
-                              style={{ width: `${v}%` }}
+                              style={{
+                                width: `${[p.conf, p.cost, p.lat, p.cap][i]}%`,
+                              }}
                             />
                           </div>
                         </div>
@@ -813,12 +831,9 @@ export default function ChatApp() {
               />
               <InfoRow
                 label="Session ID"
-                value={activeId?.slice(0, 12) + "…"}
+                value={activeId === "new" ? "—" : activeId.slice(0, 12) + "…"}
               />
-              <InfoRow
-                label="Sessions"
-                value={String(sessions.length)}
-              />
+              <InfoRow label="Sessions" value={String(sessions.length)} />
             </div>
           </Panel>
 
@@ -847,18 +862,10 @@ export default function ChatApp() {
                 >
                   <span>{n}</span>
                   <span
-                    className={`flex items-center gap-1.5 ${
-                      s === "operational"
-                        ? "text-emerald-400"
-                        : "text-yellow-400"
-                    }`}
+                    className={`flex items-center gap-1.5 ${s === "operational" ? "text-emerald-400" : "text-yellow-400"}`}
                   >
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        s === "operational"
-                          ? "bg-emerald-400"
-                          : "bg-yellow-400"
-                      }`}
+                      className={`h-1.5 w-1.5 rounded-full ${s === "operational" ? "bg-emerald-400" : "bg-yellow-400"}`}
                     />
                     {s}
                   </span>
@@ -870,9 +877,7 @@ export default function ChatApp() {
           <Panel title="Stream Status" icon={Gauge}>
             <div className="flex items-center gap-2 text-xs">
               <span
-                className={`relative flex h-2 w-2 ${
-                  streaming ? "block" : "hidden"
-                }`}
+                className={`relative flex h-2 w-2 ${streaming ? "block" : "hidden"}`}
               >
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan" />
@@ -891,8 +896,6 @@ export default function ChatApp() {
     </div>
   );
 }
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function MsgCopyBtn({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -913,45 +916,51 @@ function MsgCopyBtn({ text }: { text: string }) {
 }
 
 function MessageBubble({ m }: { m: Msg }) {
-  const user = m.role === "user";
+  const isUser = m.role === "user";
   return (
     <motion.div
       initial={{ opacity: 0, y: 10, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      className={`flex ${user ? "justify-end" : "justify-start"}`}
+      className={`flex ${isUser ? "justify-end" : "justify-start"}`}
     >
-      <div className={`max-w-[85%] w-full ${user ? "flex justify-end" : ""}`}>
-        {!user && (
+      <div className={`max-w-[85%] w-full ${isUser ? "flex justify-end" : ""}`}>
+        {!isUser && (
           <div className="mb-1.5 flex items-center justify-between">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
               <Sparkles className="h-3 w-3 text-cyan" />
               {m.model && (
-                <span className="text-cyan">{m.model.split("-").slice(0, 3).join("-")}</span>
+                <span className="text-cyan">
+                  {m.model.split("-").slice(0, 3).join("-")}
+                </span>
               )}
-              {m.routedTo && (
-                <span>· {m.routedTo.replace(/_/g, " ")}</span>
+              {m.routedTo && <span>· {m.routedTo.replace(/_/g, " ")}</span>}
+              {!m.model && !m.routedTo && (
+                <span className="text-cyan">LexaraAI</span>
               )}
-              {!m.model && !m.routedTo && <span className="text-cyan">LexaraAI</span>}
             </div>
-            {m.content && !m.streaming && (
-              <MsgCopyBtn text={m.content} />
-            )}
+            {m.content && !m.streaming && <MsgCopyBtn text={m.content} />}
           </div>
         )}
         <div
           className={
-            user
+            isUser
               ? "rounded-2xl rounded-tr-sm bg-linear-to-br from-cyan/20 to-violet/15 px-4 py-3 text-sm text-foreground ring-1 ring-cyan/25 shadow-[0_0_30px_-12px_oklch(0.78_0.17_210)]"
               : "glass-strong rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed text-foreground/95"
           }
         >
           {m.streaming && m.content === "" ? (
             <span className="inline-flex gap-1 items-center text-muted-foreground">
-              <span className="animate-bounce" style={{ animationDelay: "0ms" }}>●</span>
-              <span className="animate-bounce" style={{ animationDelay: "150ms" }}>●</span>
-              <span className="animate-bounce" style={{ animationDelay: "300ms" }}>●</span>
+              {[0, 150, 300].map((d) => (
+                <span
+                  key={d}
+                  className="animate-bounce"
+                  style={{ animationDelay: `${d}ms` }}
+                >
+                  ●
+                </span>
+              ))}
             </span>
-          ) : user ? (
+          ) : isUser ? (
             <div className="whitespace-pre-wrap text-sm">{m.content}</div>
           ) : (
             <ChatMarkdown content={m.content} streaming={m.streaming} />
@@ -980,7 +989,11 @@ function Pill({
   );
 }
 
-function IconBtn({ icon: Icon }: { icon: React.ComponentType<{ className?: string }> }) {
+function IconBtn({
+  icon: Icon,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+}) {
   return (
     <button className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-white/5 hover:text-foreground">
       <Icon className="h-4 w-4" />
@@ -1020,7 +1033,9 @@ function InfoRow({
   return (
     <div className="flex items-center justify-between text-xs">
       <span className="text-muted-foreground">{label}</span>
-      <span className={highlight ? "text-cyan font-mono font-medium" : "font-mono"}>
+      <span
+        className={highlight ? "text-cyan font-mono font-medium" : "font-mono"}
+      >
         {value}
       </span>
     </div>
