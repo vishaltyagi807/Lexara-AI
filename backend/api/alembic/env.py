@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.core.config import settings
 from app.db.base import Base
 
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
 import app.models.user
+import core.agents.policy.repository
 
 config = context.config
 

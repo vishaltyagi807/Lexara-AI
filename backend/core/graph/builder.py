@@ -14,6 +14,7 @@ from core.graph.state import GraphState
 from core.graph.edges import route_selector
 from core.agents.orchestrator.node import orchestrator_node
 from core.agents.intent.node import intent_agent_node
+from core.agents.policy.node import policy_agent_node
 from core.agents.router.node import router_node
 
 
@@ -24,6 +25,7 @@ def build_graph() -> StateGraph:
     # ── Nodes ─────────────────────────────────────────────────────────────────
     g.add_node("orchestrator", orchestrator_node)
     g.add_node("intent_agent", intent_agent_node)
+    g.add_node("policy_agent", policy_agent_node)
     g.add_node("router",       router_node)
 
     # ── Entry point ───────────────────────────────────────────────────────────
@@ -35,8 +37,9 @@ def build_graph() -> StateGraph:
     g.add_conditional_edges(
         "intent_agent",
         route_selector,
-        {"router": "router", "end": END},
+        {"policy_agent": "policy_agent", "end": END},
     )
+    g.add_edge("policy_agent", "router")
     g.add_edge("router", END)
 
     return g.compile()

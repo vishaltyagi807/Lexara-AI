@@ -40,7 +40,81 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("Redis connection FAILED: %s — token blacklisting will not work.", exc)
 
+    # Initialize Policy Cache and Subscriber
+    from core.agents.policy.cache import PolicyCache
+    from core.agents.policy.repository import PolicyRepository
+    from core.agents.policy.subscriber import start_policy_subscriber
+    from app.db.session import AsyncSessionLocal
+    import asyncio
+
+    # Load initial active policy from DB
+    try:
+        async with AsyncSessionLocal() as db:
+            active_policy = await PolicyRepository.get_active_policy(db)
+            if active_policy:
+                PolicyCache().set_policy(active_policy.version, active_policy.rules_payload)
+                logger.info("Loaded active policy version %d on startup.", active_policy.version)
+            else:
+                # Seed a default policy if none exists
+                default_rules = {
+                    "provider": {
+                        "allowed_providers": ["openai", "groq", "anthropic"],
+                        "blocked_providers": [],
+                        "preferred_providers": ["groq"]
+                    },
+                    "budget": {
+                        "max_budget_per_request": 0.05
+                    },
+                    "latency": {
+                        "max_latency_ms": 5000
+                    },
+                    "availability": {
+                        "min_uptime_pct": 99.0
+                    },
+                    "reasoning": {
+                        "allow_reasoning": True
+                    },
+                    "tools": {
+                        "allowed_tools": ["calculator", "web_search"]
+                    },
+                    "rag": {
+                        "allow_rag": True
+                    },
+                    "tenant": {
+                        "allowed_tenants": [],
+                        "blocked_ips": []
+                    },
+                    "security": {
+                        "block_prompt_injection": True
+                    }
+                }
+                await PolicyRepository.create_policy(
+                    db,
+                    version=1,
+                    rules_payload=default_rules,
+                    created_by="system",
+                    description="Default seeded system policy"
+                )
+                await PolicyRepository.activate_policy(db, version=1)
+                await db.commit()
+                PolicyCache().set_policy(1, default_rules)
+                logger.info("No policy found. Seeded and loaded default version 1.")
+    except Exception as exc:
+        logger.error("Failed to initialize PolicyCache from DB: %s", exc)
+
+    # Start policy subscriber
+    subscriber_task = asyncio.create_task(start_policy_subscriber())
+
     yield
+
+    # Cancel Redis subscriber
+    try:
+        subscriber_task.cancel()
+        await subscriber_task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.warning("Error cancelling policy subscriber: %s", exc)
 
     logger.info("Shutting down %s …", settings.APP_NAME)
     from app.db.session import engine

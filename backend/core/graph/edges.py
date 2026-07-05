@@ -10,4 +10,4 @@ def route_selector(state: GraphState) -> str:
     """Conditional edge: skip routing if there is a fatal error with no intent."""
     if state.get("error") and state.get("intent") is None:
         return "end"
-    return "router"
+    return "policy_agent"
