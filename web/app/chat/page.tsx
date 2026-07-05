@@ -25,10 +25,13 @@ import {
   RefreshCw,
   Copy,
   Check,
+  Loader2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import LightRays from "@/components/backgrounds/LightRays";
 import { ChatMarkdown } from "@/components/chat/ChatMarkdown";
+import { useAuth } from "@/lib/auth-context";
 
 
 
@@ -114,6 +117,16 @@ function deriveTitle(text: string): string {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ChatApp() {
+  const { user, loading, logout } = useAuth();
+  const router = useRouter();
+
+  // Redirect if not logged in
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/login?redirect=/chat");
+    }
+  }, [user, loading, router]);
+
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -255,6 +268,7 @@ export default function ChatApp() {
       const res = await fetch(`${API_BASE}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           message,
           conversation_id: activeId,
@@ -379,6 +393,26 @@ export default function ChatApp() {
 
   // ─────────────────────────────────────────────────────────────────────────────
 
+  if (loading || !user) {
+    return (
+      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,oklch(0.05_0.02_260)_95%)]" />
+          <div className="absolute -top-40 left-1/2 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-br from-cyan/20 via-violet/10 to-transparent blur-3xl" />
+        </div>
+        <div className="relative z-10 flex flex-col items-center gap-4 text-center">
+          <div className="relative flex h-16 w-16 items-center justify-center">
+            <Loader2 className="absolute h-12 w-12 animate-spin text-cyan" />
+            <div className="h-6 w-6 rounded-full bg-gradient-to-br from-cyan to-violet opacity-80 blur-[2px]" />
+          </div>
+          <h2 className="font-display text-lg font-semibold tracking-wide text-foreground animate-pulse">
+            Loading your workspace
+          </h2>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="relative flex h-screen overflow-hidden bg-background text-foreground">
       <div className="absolute inset-0 pointer-events-none z-0">
@@ -390,9 +424,7 @@ export default function ChatApp() {
         {/* Logo */}
         <div className="flex items-center justify-between px-4 py-4 border-b border-border/40">
           <Link href="/" className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-linear-to-br from-cyan to-violet">
-              <Zap className="h-4 w-4 text-foreground" strokeWidth={2.5} />
-            </div>
+            <img src="/fav.png" alt="LexaraAI" className="h-8 w-8 object-contain rounded-lg" />
             <span className="font-display text-sm font-semibold">
               Lexara<span className="text-gradient">AI</span>
             </span>
@@ -471,20 +503,30 @@ export default function ChatApp() {
         </div>
 
         {/* User */}
-        <div className="border-t border-border/60 p-3">
+        <div className="border-t border-border/60 p-3 space-y-2">
           <div className="glass flex items-center gap-2 rounded-xl px-3 py-2">
-            <div className="grid h-7 w-7 place-items-center rounded-full bg-linear-to-br from-cyan to-violet text-background">
-              <User className="h-3.5 w-3.5" />
-            </div>
+            {user?.avatar_url ? (
+              <img src={user.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+            ) : (
+              <div className="grid h-7 w-7 place-items-center rounded-full bg-linear-to-br from-cyan to-violet text-background">
+                <User className="h-3.5 w-3.5" />
+              </div>
+            )}
             <div className="min-w-0 flex-1">
               <div className="truncate text-xs font-medium">
-                {activeId?.slice(0, 8)}…
+                {user?.full_name}
               </div>
-              <div className="text-[10px] text-muted-foreground">
-                Connected · Groq
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {user?.tier} Tier
               </div>
             </div>
           </div>
+          <button
+            onClick={() => logout()}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-border/40 bg-white/5 py-2 text-xs font-medium text-foreground hover:bg-rose-500/10 hover:border-rose-500/20 hover:text-rose-400 transition"
+          >
+            Sign Out
+          </button>
         </div>
       </aside>
 
